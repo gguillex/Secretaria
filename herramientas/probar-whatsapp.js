@@ -293,6 +293,11 @@ async function main() {
     const p = (entrada, metadatos, extra = {}) => comun.planificarAdjunto({ entrada, metadatos, ahora: FECHA_NOMBRE, limiteMb: 25, ...extra });
     const foto = p({ tipo_entrada: 'imagen' }, { url: 'https://lookaside.fbsbx.com/x?mid=1', mime_type: 'image/jpeg', file_size: 120000 });
     afirmar('una foto sin nombre: fecha y hora de recepción, extensión del tipo', foto.ok && foto.nombre === '2026-10-12 1830 · WhatsApp.jpg' && foto.mime_type === 'image/jpeg' && foto.tamano === 120000 && foto.media_url.startsWith('https://lookaside'), JSON.stringify(foto));
+    // Dos fotos del mismo minuto ya no se llaman igual : sufijo de 4 caracteres sacado del id del mensaje, siempre el mismo
+    const f1 = p({ tipo_entrada: 'imagen', wa_message_id: 'wamid.HBgLMzQ2MDAwMDAwMDAVAgASGBQzQUFBMUIyQzNEND' }, { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/jpeg' });
+    const f2 = p({ tipo_entrada: 'imagen', wa_message_id: 'wamid.HBgLMzQ2MDAwMDAwMDAVAgASGBQzQUFBMUIyQzNEND2' }, { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/jpeg' });
+    const f1b = p({ tipo_entrada: 'imagen', wa_message_id: 'wamid.HBgLMzQ2MDAwMDAwMDAVAgASGBQzQUFBMUIyQzNEND' }, { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/jpeg' });
+    afirmar('dos fotos del mismo minuto: nombres distintos («… · WhatsApp xxxx.jpg»); el mismo mensaje, el mismo nombre', /^2026-10-12 1830 · WhatsApp [0-9a-z]{4}\.jpg$/.test(f1.nombre) && f1.nombre !== f2.nombre && f1.nombre === f1b.nombre, `${f1.nombre} / ${f2.nombre}`);
     const png = p({ tipo_entrada: 'imagen' }, { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/png' });
     afirmar('una foto PNG sin tamaño conocido se acepta', png.ok && png.nombre.endsWith('.png') && png.tamano === null);
     const doc = p({ tipo_entrada: 'documento', filename: 'Contrato: piso.pdf' }, { url: 'https://lookaside.fbsbx.com/x', mime_type: 'application/pdf', file_size: '2048' });
@@ -340,7 +345,7 @@ async function main() {
     ];
     const salida = await correr(comprobar, { input: respuestas, nodos: { Configuración: [{ config: cfg }], '¿Es archivo?': entradas } });
     afirmar('Comprobar adjunto: un item por adjunto, cada uno con SU entrada (no se mezclan)', salida.length === 3 && salida[0].wa_message_id === 'wamid.1' && salida[1].wa_message_id === 'wamid.2' && salida[0].caption === 'luz' && salida[1].nombre === 'Contrato.pdf', JSON.stringify(salida));
-    afirmar('Comprobar adjunto: la foto lleva el nombre con la fecha simulada de Madrid', salida[0].ok && salida[0].nombre === `${FECHA_NOMBRE} · WhatsApp.jpg`);
+    afirmar('Comprobar adjunto: la foto lleva el nombre con la fecha simulada de Madrid y el sufijo de su mensaje', salida[0].ok && new RegExp(`^${FECHA_NOMBRE} · WhatsApp [0-9a-z]{4}\\.jpg$`).test(salida[0].nombre), salida[0].nombre);
     afirmar('Comprobar adjunto: un tipo no admitido no tapa a los demás y se avisa', salida[2].ok === false && salida[2].mensajes[0].includes('application/zip') && salida[0].ok && salida[1].ok);
     const conError = await correr(comprobar, { input: [{ error: { message: '401' } }], nodos: { Configuración: [{ config: cfg }], '¿Es archivo?': [entradas[0]] } });
     afirmar('Comprobar adjunto: si Meta falló, aviso honesto', conError[0].ok === false && conError[0].mensajes[0] === comun.MENSAJE_ADJUNTO_FALLO);
@@ -841,7 +846,9 @@ async function main() {
 
     const base = nodo('configuracion.js').replace('TU-PROYECTO', 'abcdefgh').replace('TU-PHONE-NUMBER-ID', '123456789012').replace('TU-ID-DE-ENTRADA', '1AbCdEfGhIjKlMnOp');
     const [c] = await correr(base);
-    afirmar('Configuración: ESPERA_ARCHIVOS_S = 0 (un aviso por archivo, sin espera) y el «quieto» nunca baja de 0', c.config.espera_archivos_s === 0 && c.config.quieto_archivos_s === 0);
+    afirmar('Configuración: ESPERA_ARCHIVOS_S = 4 (varios archivos seguidos, un solo aviso; sección 71) y el «quieto» un segundo menos', c.config.espera_archivos_s === 4 && c.config.quieto_archivos_s === 3);
+    const [c0] = await correr(base.replace('const ESPERA_ARCHIVOS_S = 4;', 'const ESPERA_ARCHIVOS_S = 0;'));
+    afirmar('Configuración: con ESPERA_ARCHIVOS_S = 0 el «quieto» nunca baja de 0', c0.config.espera_archivos_s === 0 && c0.config.quieto_archivos_s === 0);
     afirmar('Configuración: sin espera para agrupar, nueva petición de turno cada 2 s y vueltas suficientes para que caduque el turno', c.config.espera_agrupar_s === 0 && c.config.espera_turno_s === 2 && c.config.max_esperas_turno * c.config.espera_turno_s > c.config.turno_min * 60);
     await lanza('Configuración: rechaza una espera de agrupación negativa', correr(base.replace('const ESPERA_AGRUPAR_S = 0;', 'const ESPERA_AGRUPAR_S = -1;')), 'ESPERA_AGRUPAR_S');
     await lanza('Configuración: rechaza una espera de agrupación de más de 30 s', correr(base.replace('const ESPERA_AGRUPAR_S = 0;', 'const ESPERA_AGRUPAR_S = 31;')), 'ESPERA_AGRUPAR_S');

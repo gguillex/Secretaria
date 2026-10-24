@@ -7,7 +7,7 @@
 //     una carpeta que cuelgue de Secretaria (hasta 3 niveles) y no sea Entrada ni Notas, y un archivo que esté registrado. Devuelve
 //     un item { papelera } por cada cosa que sí se puede mandar (el nodo siguiente las manda una a una) o, si no queda ninguna, un item
 //     { nada: true }. Los rechazados viajan en cada item para que «Resultado» los cuente.
-//   - Al MOVER carpetas dentro de otra (meta.mover_carpeta, sección 69): busca las carpetas y la de destino en el árbol real y decide. Devuelve UN item
+//   - Al MOVER carpetas dentro de otra (meta.mover_carpeta): busca las carpetas y la de destino en el árbol real y decide. Devuelve UN item
 //     { mover_plan } con la carpeta de destino que haya que crear antes (si se pidió y no existe), los movimientos que sí se pueden hacer (ids, rutas y
 //     cuántas cosas viajan) y, por cada carpeta que no se puede mover, su motivo (no existe, es ambigua, Entrada/Notas, dentro de sí misma, ya está ahí,
 //     ya hay otra con ese nombre, quedaría a más de 3 niveles). No toca nada.
@@ -145,6 +145,17 @@ function buscarCarpeta(arbol, texto, parcial) {
   }
   return c;
 }
+// ¿Se parecen dos nombres de carpeta? Uno tiene todas las palabras del otro («viaje Tren de Hierro» y «Tren de Hierro») sin contar artículos ni
+// «carpeta». Es la misma regla que nombresParecidos de planificar.js (sin las erratas: aquí basta con lo seguro).
+const VACIAS_NOMBRE = new Set(['de', 'del', 'la', 'las', 'el', 'los', 'lo', 'y', 'e', 'a', 'al', 'en', 'un', 'una', 'mi', 'mis', 'carpeta', 'carpetas']);
+const palabrasNombre = (s) => clave(s).replace(/[^\p{L}\p{N} ]+/gu, ' ').split(' ').filter((w) => w && !VACIAS_NOMBRE.has(w));
+function nombresParecidos(a, b) {
+  const pa = palabrasNombre(a);
+  const pb = palabrasNombre(b);
+  if (pa.length === 0 || pb.length === 0) return false;
+  const [corto, largo] = pa.length <= pb.length ? [pa, pb] : [pb, pa];
+  return corto.every((w) => largo.includes(w));
+}
 
 // Devuelve el plan: { crear, movimientos, rechazos, error_global }. «crear» es la carpeta de destino que hay que crear antes (su id real se
 // pone en «Preparar movimientos»); cada movimiento es { id, nuevo_padre_id, viejo_padre_id, nombre, ruta_origen, ruta_destino, archivos, subcarpetas };
@@ -208,7 +219,14 @@ function decidirMover(pedido, arbol, archivos, raizId) {
     if (yaElegidas.some((x) => clave(origen.ruta).startsWith(`${clave(x.ruta)}/`) || clave(x.ruta).startsWith(`${clave(origen.ruta)}/`))) { rechazar({ error: 'anidada', ruta: origen.ruta }); continue; }
     if (!destino.nueva && origen.padre === destino.id) { rechazar({ error: 'ya_esta', origen: origen.nombre, destino: destino.ruta }); continue; }
     if ((!destino.nueva && arbol.carpetas.some((x) => x.padre === destino.id && clave(x.nombre) === clave(origen.nombre))) || nombresDentro.has(clave(origen.nombre))) {
-      rechazar({ error: 'choque', nombre: origen.nombre, destino: destino.ruta });
+      rechazar({ error: 'choque', nombre: origen.nombre, ruta: origen.ruta, destino: destino.ruta });
+      continue;
+    }
+    // Una carpeta con nombre PARECIDO en el destino («viaje Tren de Hierro» a Viajes, donde ya está «Tren de Hierro»): quedarían dos casi iguales.
+    // No se mueve y se dice cómo juntarlas 
+    const gemela = destino.nueva ? null : arbol.carpetas.find((x) => x.padre === destino.id && x.id !== origen.id && nombresParecidos(x.nombre, origen.nombre));
+    if (gemela) {
+      rechazar({ error: 'parecida', nombre: origen.nombre, ruta: origen.ruta, destino: destino.ruta, parecida: gemela.ruta });
       continue;
     }
     // Hasta 3 niveles: cuenta lo más hondo que cuelga de la carpeta (en Drive y entre los archivos ya clasificados dentro de ella)

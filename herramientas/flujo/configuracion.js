@@ -28,6 +28,11 @@ const ESPERA_MIN = 15;
 // Minutos que una pregunta de la secretaria espera respuesta. Pasado ese tiempo, un mensaje nuevo ya no se
 // interpreta como su respuesta (así no se le atribuyen mensajes que no tienen nada que ver).
 const CADUCIDAD_MIN = 30;
+// Memoria de la conversación: cuántos mensajes anteriores tuyos, con lo que se te contestó, ve el modelo para entender una
+// corrección («no, quiero que…»). Solo los de los últimos MEMORIA_MIN minutos. 0 = apagada. Más mensajes = más texto que leer
+// para Gemini (algo más lento y caro).
+const MEMORIA_MENSAJES = 5;
+const MEMORIA_MIN = 120;
 // ==================================
 
 if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SUPABASE_URL) || SUPABASE_URL.includes('TU-PROYECTO')) {
@@ -45,6 +50,12 @@ if (!Number.isFinite(ESPERA_MIN) || ESPERA_MIN <= 0) {
 if (!Number.isFinite(CADUCIDAD_MIN) || CADUCIDAD_MIN <= 0) {
   throw new Error('Configuración: CADUCIDAD_MIN debe ser un número positivo');
 }
+if (!Number.isInteger(MEMORIA_MENSAJES) || MEMORIA_MENSAJES < 0 || MEMORIA_MENSAJES > 10) {
+  throw new Error('Configuración: MEMORIA_MENSAJES debe ser un entero de 0 a 10');
+}
+if (!Number.isFinite(MEMORIA_MIN) || MEMORIA_MIN <= 0) {
+  throw new Error('Configuración: MEMORIA_MIN debe ser un número positivo');
+}
 
 return [
   {
@@ -56,6 +67,8 @@ return [
         carpeta_raiz_id: CARPETA_RAIZ_ID,
         espera_min: ESPERA_MIN,
         caducidad_min: CADUCIDAD_MIN,
+        memoria_mensajes: MEMORIA_MENSAJES,
+        memoria_min: MEMORIA_MIN,
       },
     },
   },

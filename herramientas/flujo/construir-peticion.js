@@ -169,6 +169,93 @@ const archivosPrompt = visibles.map((f, n) => {
 const refDeArchivo = (fila) => Object.entries(refsArchivos).find(([, id]) => id === fila.id)?.[0] ?? '';
 const refsCitados = citados.map(refDeArchivo).filter(Boolean);
 const archivoCitado = refsCitados.join(', ');
+// El último lote de archivos sin sitio : los que llegaron seguidos (menos de 2 minutos entre uno y el siguiente) y el más nuevo hace
+// menos de 30 minutos. «Ponlo en Budapest» sin citar nada vale para todos ellos (antes preguntaba «¿a cuál te refieres?»).
+const LOTE_HUECO_MS = 2 * 60000;
+const LOTE_EDAD_MS = 30 * 60000;
+const loteReciente = (() => {
+  const pend = visibles.filter((f) => f.estado === 'pendiente' && Number.isFinite(Date.parse(f.created_at ?? ''))).sort((x, y) => Date.parse(y.created_at) - Date.parse(x.created_at));
+  if (pend.length === 0 || Date.now() - Date.parse(pend[0].created_at) > LOTE_EDAD_MS) return [];
+  const lote = [pend[0]];
+  for (let k = 1; k < pend.length && lote.length < 10; k++) {
+    if (Date.parse(lote.at(-1).created_at) - Date.parse(pend[k].created_at) > LOTE_HUECO_MS) break;
+    lote.push(pend[k]);
+  }
+  return lote.map(refDeArchivo).filter(Boolean);
+})();
+
+// Las carpetas que existen o se han pedido (función carpetas_conocidas): para no crear una carpeta parecida a otra que ya existe
+// y para reconocer «mueve Budapest a Viajes» sin la palabra «carpeta». Con try y sin actualizar la base de datos a la 1.5: sin carpetas conocidas (todo sigue como antes).
+let carpetasConocidas = [];
+try {
+  carpetasConocidas = $('Leer carpetas')
+    .all()
+    .map((i) => i.json)
+    .filter((c) => c && typeof c.ruta === 'string' && c.ruta.trim() !== '')
+    .map((c) => ({ ruta: c.ruta, en_drive: c.en_drive === true, pedida: c.pedida === true, archivos: Number(c.archivos) || 0 }))
+    // Las que están en Drive primero: si hay «Viajes/Budapest» (Drive) y «viajes/Budapest» (archivos antiguos), se escribe como en Drive 
+    .sort((a, b) => Number(b.en_drive) - Number(a.en_drive))
+    .slice(0, 2000);
+} catch (e) {
+  carpetasConocidas = [];
+}
+const rutasConocidas = carpetasConocidas.map((c) => c.ruta);
+
+// La conversación reciente (sección 71, a petición del usuario): los últimos mensajes suyos y lo que se le contestó, para que el modelo
+// entienda una corrección («no, quiero que…») o una referencia a algo de hace un momento. Solo contexto: ya está resuelto. MEMORIA_MENSAJES = 0
+// lo apaga. Se quitan los mensajes que no se contestaron por separado (los que se juntaron con este) y los que repiten este mismo texto.
+let conversacion = [];
+try {
+  const actual = String(entrada.mensaje ?? '').replace(/\s+/g, ' ').trim();
+  conversacion = $('Leer conversación')
+    .all()
+    .map((i) => i.json)
+    .filter((r) => r && typeof r.created_at === 'string' && typeof r.respuesta_texto === 'string' && r.respuesta_texto.trim() !== '' && r.wa_message_id !== entrada.wa_message_id)
+    .filter((r) => {
+      const t = String(r.texto_original ?? '').replace(/\s+/g, ' ').trim();
+      return !(t && actual.includes(t));
+    })
+    .slice(0, Number.isInteger(config.memoria_mensajes) ? config.memoria_mensajes : 0)
+    .reverse();
+} catch (e) {
+  conversacion = [];
+}
+
+// Los últimos archivos que movió o guardó la secretaria : «Resultado» anota sus ids en el hilo del mensaje que lo pidió. Para
+// «mueve esos archivos a X» se toma el más reciente de la conversación (aunque MEMORIA_MENSAJES = 0: la lectura trae siempre unos pocos).
+const movidosDe = (r) => {
+  if (!r || !Array.isArray(r.hilo) || r.hilo.length === 0) return null;
+  try {
+    const t = JSON.parse(r.hilo.at(-1)?.texto ?? '');
+    if (t?.motivo !== 'movidos' || t.origen !== 'codigo' || !Array.isArray(t.ids)) return null;
+    const ids = t.ids.filter((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 50);
+    // Para «déjalo como estaba» : de qué carpeta salió cada uno y qué carpeta se apuntó para vaciar
+    const ruta = (x) => typeof x === 'string' && x.trim() !== '' && x.length <= 200 && !/[\u0000-\u001f]/.test(x);
+    const deshacer = (Array.isArray(t.deshacer) ? t.deshacer : []).filter((d) => d && ids.includes(d.id) && ruta(d.de) && ruta(d.a)).slice(0, 50);
+    const vaciar = (Array.isArray(t.vaciar) ? t.vaciar : []).filter(ruta).slice(0, 5);
+    return ids.length > 0 ? { ids, deshacer, vaciar } : null;
+  } catch (e) {
+    return null;
+  }
+};
+let movidosRecientes = null;
+try {
+  let primero = true;
+  for (const r of $('Leer conversación').all().map((i) => i.json)) {
+    if (!r || r.wa_message_id === entrada.wa_message_id) continue;
+    movidosRecientes = movidosDe(r);
+    // ultimo: lo movido fue lo ÚLTIMO que contestó la secretaria (solo entonces «déjalo como estaba» se refiere a eso)
+    if (movidosRecientes) {
+      movidosRecientes.ultimo = primero;
+      break;
+    }
+    primero = false;
+  }
+} catch (e) {
+  movidosRecientes = null;
+}
+// Los archivos recientes por nombre (para mover uno por su nombre y saber si hay varios que se llaman igual)
+const archivosConocidos = filasArchivos.map((f) => ({ id: f.id, nombre: f.nombre, carpeta: f.carpeta_destino ?? null, estado: f.estado }));
 
 // Si la secretaria hizo una pregunta hace poco y sigue sin respuesta, este mensaje es su respuesta: se le devuelve
 // al modelo el hilo guardado (turnos user/model) y la pregunta. "Leer pregunta pendiente" ya aplica la caducidad.
@@ -176,7 +263,7 @@ const archivoCitado = refsCitados.join(', ');
 // Pueden estar abiertas hasta tres preguntas a la vez (el usuario escribe antes de que le llegue la respuesta): el mensaje contesta a la
 // que encaja con lo que dice, y una orden nueva («borra…», «dame…») no contesta a ninguna y las deja abiertas.
 // Las funciones son la MISMA sección de planificar.js, que el generador inserta aquí; no editar aquí.
-const { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta } = __COMANDOS__;
+const { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento } = __COMANDOS__;
 const hiloCoherente = (h) =>
   h.length >= 2 && h.length % 2 === 0 && h.every((t, i) => t?.rol === (i % 2 === 0 ? 'user' : 'model') && typeof t.texto === 'string' && t.texto !== '');
 const todas = $('Leer pregunta pendiente')
@@ -242,6 +329,9 @@ const preguntasIgnoradas = pendiente || !Number.isFinite(recibido)
 const NOMBRE_TERMINO = 'nombre de la secretaria';
 const filaNombre = memoria.find((m) => sinAcentos(m.termino) === NOMBRE_TERMINO);
 const nombreSecretaria = filaNombre ? filaNombre.significado : null;
+// Una propuesta concreta de la secretaria aceptada («sí», «Mueve los archivos»…; sección 74): se trabaja con la orden propuesta
+const sugerida = aceptaSugerencia(entrada.mensaje, hiloPrevio);
+const mensajeTrabajo = sugerida?.tipo === 'si' ? sugerida.orden : entrada.mensaje;
 const esperaNombre = hiloPrevio.length > 0 && (() => {
   try {
     return JSON.parse(hiloPrevio.at(-1).texto)?.motivo === 'pedir_nombre';
@@ -271,8 +361,17 @@ const saltarModelo =
   (!pedirNombre && !esperaNombre && respuestaOferta(entrada.mensaje, hiloPrevio) !== null) ||
   // Un archivo con pie (o su confirmación respondida) que es solo una ruta de carpeta: se archiva por código
   (!pedirNombre && !esperaNombre && interpretarCarpetaSuelta(entrada.mensaje, refsCitados) !== null) ||
-  // Meter una carpeta dentro de otra: se reconoce por código («mete la carpeta Viajes dentro de Fotos»)
-  (!pedirNombre && !esperaNombre && interpretarMoverCarpeta(entrada.mensaje) !== null);
+  // Meter una carpeta dentro de otra: se reconoce por código («mete la carpeta Viajes dentro de Fotos», «mueve Budapest a Viajes»)
+  sugerida !== null ||
+  (!pedirNombre && !esperaNombre && interpretarMoverCarpeta(entrada.mensaje, rutasConocidas) !== null) ||
+  // Las fotos o los archivos de una carpeta a otra, «ponlo en Budapest» tras mandar fotos y la respuesta a «¿dónde la guardo?» 
+  (!pedirNombre && !esperaNombre && interpretarMoverArchivos(entrada.mensaje, rutasConocidas) !== null) ||
+  (!pedirNombre && !esperaNombre && interpretarMoverArchivoNombre(entrada.mensaje) !== null) ||
+  (!pedirNombre && !esperaNombre && interpretarMoverEsos(entrada.mensaje, rutasConocidas) !== null) ||
+  (!pedirNombre && !esperaNombre && interpretarMoverContenido(entrada.mensaje, rutasConocidas) !== null) ||
+  (!pedirNombre && !esperaNombre && (movidosDe(filaCitada) !== null || (movidosRecientes?.ultimo === true && movidosRecientes.deshacer.length > 0)) && interpretarDeshacerMovimiento(entrada.mensaje)) ||
+  (!pedirNombre && !esperaNombre && refsCitados.length === 0 && archivarUltimoLote(entrada.mensaje, loteReciente) !== null) ||
+  (!pedirNombre && !esperaNombre && respuestaCarpeta(entrada.mensaje, hiloPrevio) !== null);
 
 // Si responde a un aviso, el modelo recibe delante del mensaje de qué alarma o cita se trata (solo en ese caso: el resto de mensajes
 // le llegan igual que siempre). Así «muévela al viernes a las 9» sabe a qué se refiere.
@@ -305,6 +404,14 @@ const notaCitada = filaCitada && !preguntaCitada && avisoCitado.length === 0 && 
 const notaArchivos = refsCitados.length > 1
   ? `[El usuario responde a tu aviso de ${refsCitados.length} archivos guardados juntos (${refsCitados.join(', ')}). Lo que pida vale para todos ellos.]\n`
   : '';
+// La conversación reciente, la más antigua primero 
+const fmtHoraConv = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const ENTRADA_SIN_TEXTO = { imagen: '(una foto)', documento: '(un documento)', audio: '(un audio)' };
+const notaConversacion = conversacion.length > 0
+  ? `[Conversación reciente, de la más antigua a la más nueva. Es solo contexto y ya está resuelta: no repitas nada de lo que se hizo ni lo vuelvas a guardar. Úsala solo si el mensaje nuevo corrige algo de ella («no, quiero que…»), la continúa o se refiere a algo que se dijo.\n${conversacion
+    .map((r) => `• ${fmtHoraConv.format(new Date(r.created_at))} Usuario: «${recortar(r.texto_original || ENTRADA_SIN_TEXTO[r.tipo_entrada] || '(sin texto)', 300)}» → Tú: «${recortarMedio(r.respuesta_texto, 300)}»`)
+    .join('\n')}]\n`
+  : '';
 const notaAviso = avisoCitado.length > 0
   ? `[El usuario responde a tu aviso de: ${avisoCitado.map(describirCitado).join('; ')}. Si pide aplazarla, moverla o cambiarla, es un corregir de ${avisoCitado.length === 1 ? 'ese elemento' : 'uno de ellos'}.]\n`
   : '';
@@ -334,6 +441,20 @@ return [
       // Los archivos a los que se refiere este mensaje (su pie, o la respuesta a su confirmación): "Planificar" los archiva por código si el mensaje es una ruta
       archivos_citados: refsCitados,
       archivos_info: infoArchivos,
+      // El último lote de archivos sin sitio («ponlo en Budapest» sin citar) y las carpetas conocidas 
+      lote_reciente: loteReciente,
+      // La orden de la propuesta aceptada : Planificar la procesa en lugar del mensaje y cierra la propuesta
+      mensaje_efectivo: sugerida?.tipo === 'si' ? mensajeTrabajo : null,
+      sugerencia_aceptada: sugerida?.tipo === 'si',
+      carpetas_conocidas: carpetasConocidas,
+      // «Mueve esos archivos a X» y los archivos recientes por nombre 
+      movidos_recientes: (() => {
+        const citada = movidosDe(filaCitada);
+        return citada ? { ...citada, ultimo: true } : movidosRecientes;
+      })(),
+      archivos_conocidos: archivosConocidos,
+      // Cuántos mensajes anteriores vio el modelo (para la evaluación de la memoria; el texto no se repite aquí)
+      conversacion_vista: conversacion.length,
       agenda,
       // Para "Planificar": la pregunta anterior que este mensaje cierra y el hilo que hay que acumular
       pendiente_id: pendiente?.id ?? null,
@@ -346,7 +467,7 @@ return [
       memoria_filas: memoriaFilas,
       // El horario fijo (para avisar si una cita cae dentro y para /horario)
       horario,
-      // Lo que quitó el usuario (para «deshaz», sección 63)
+      // Lo que quitó el usuario (para «deshaz»)
       quitados,
       espera_nombre: esperaNombre,
       // Sin llamada a Gemini: "Planificar" lo contesta con código
@@ -360,7 +481,7 @@ return [
         systemInstruction: { parts: [{ text: sistema }] },
         contents: [
           ...hiloPrevio.map((t) => ({ role: t.rol, parts: [{ text: t.texto }] })),
-          { role: 'user', parts: [{ text: `${notaAviso}${notaArchivos}${notaCitada}${notaOferta}${entrada.mensaje}` }] },
+          { role: 'user', parts: [{ text: `${notaConversacion}${notaAviso}${notaArchivos}${notaCitada}${notaOferta}${entrada.mensaje}` }] },
         ],
         generationConfig: {
           temperature: 0,

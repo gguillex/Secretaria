@@ -31,7 +31,7 @@ nombre y «Aviso de fallos» como *Error workflow* (`herramientas/comun/importac
 | WhatsApp | Webhook de Meta | Verifica la firma `X-Hub-Signature-256` y el número permitido, descarta duplicados, transcribe audios, sube archivos a Drive, registra el orden de llegada de cada mensaje, pone los textos y audios en la cola y contesta todo en ese orden (citando el mensaje si llegaron varios). |
 | Procesar mensaje | Llamado por WhatsApp | Lee contexto (memoria, pendientes, pregunta abierta, archivos, proyectos, avisos, horario fijo), llama al modelo si hace falta, valida, escribe en Supabase y redacta la respuesta. |
 | Sincronizar Calendar | Cada minuto | Lleva a Google Calendar los eventos marcados como pendientes de sincronizar (crear, mover, borrar). |
-| Sincronizar Drive | Cada minuto | Mueve, renombra y crea carpetas en Drive según lo marcado en la base de datos. |
+| Sincronizar Drive | Cada 10 segundos | Mueve, renombra y crea carpetas en Drive según lo marcado en la base de datos, y manda a la papelera la carpeta que se quedó vacía al mover sus archivos (solo si Drive confirma que lo está). Las ejecuciones correctas no se guardan. |
 | Vigilar Calendar / Vigilar Drive | Cada 5 minutos | Detectan lo que se cambia a mano en Calendar o Drive, lo reflejan en la base de datos y avisan. |
 | Recordatorios | Cada minuto | Avisos de las alarmas: 1 hora antes, 30 minutos antes y a la hora. |
 | Avisos de eventos | Cada minuto | Aviso por WhatsApp de una cita que empieza pronto. Guarda qué iba en cada aviso para poder responderle («retrásala media hora»). |
@@ -57,11 +57,13 @@ ni `authenticated`: solo la clave secreta (`service_role`) que usa n8n puede lee
 | `drive_arbol`, `registro_drive`, `vigilantes_estado`, `registro_calendar` | Estado y registro de los vigilantes. |
 | `avisos_enviados` | Qué alarmas y citas iban en cada aviso enviado (para entender las respuestas a un aviso). |
 | `turno` | Fila única: quién está procesando la cola de mensajes. |
+| `turnos` | Turnos con caducidad (hoy, el de «Sincronizar Drive»). |
+| `carpetas_vaciar`, `carpetas_creadas` | Carpetas que se mandarán a la papelera al quedarse vacías, y las que acaba de crear «Sincronizar Drive». |
 | `llegadas` | Orden de llegada de todos los mensajes (de cualquier tipo), para contestarlos en ese orden. Se vacía sola (2 días). |
 | `horario_fijo` | Horario semanal del usuario: un bloque por día con su título y sus horas. |
 
 **Bandejas de salida:** los cambios hacia Google no se hacen en línea. Un *trigger* marca el elemento (`calendar_pendiente`,
-`drive_pendiente`) y un flujo aparte lo sincroniza cada minuto. Así el mensaje se guarda aunque Google falle, y la sincronización se
+`drive_pendiente`) y un flujo aparte lo sincroniza cada 10 segundos (con un turno en la base de datos para que dos ejecuciones no creen la misma carpeta). Así el mensaje se guarda aunque Google falle, y la sincronización se
 puede parar sin tocar el flujo principal. Las escrituras de vuelta comprueban `updated_at` para no pisar un cambio hecho mientras tanto,
 y el id del evento de Calendar se deriva del id del elemento (sin duplicados).
 
@@ -124,6 +126,20 @@ suyo. Un mensaje que no llegó a guardarse deja de hacer esperar al cabo de 1 mi
   texto (o una respuesta que es solo la ruta, «Fotos/Viajes») se archiva por código, sin modelo y sin preguntar. Si llegan varios
   archivos seguidos, `ESPERA_ARCHIVOS_S` (0 por defecto = un aviso por archivo) permite agruparlos en un solo aviso: espera esos
   segundos y `reclamar_confirmacion_archivos()` entrega todos los archivos sin avisar a una sola ejecución.
+- **Mover archivos ya guardados:** «mueve las fotos de Budapest a Viajes/Budapest», «mueve todo lo de Notas a Viajes», un archivo por
+  su nombre (con extensión) o «mueve esos archivos» (los del último movimiento o guardado) se reconocen por código. Una orden mal
+  escrita o una propuesta de la secretaria («¿Paso los archivos de «X» a «Y»?») queda abierta: basta con «sí» o repetir el principio de
+  la orden. Las fotos se nombran con fecha, hora y un sufijo corto, para que dos del mismo minuto no se llamen igual. Al mover todos
+  los archivos de una carpeta, `pedir_vaciar_carpeta()` la apunta; «Sincronizar Drive» comprueba en Drive que no queda nada (ni lo
+  subido a mano) y entonces la manda a la papelera (`carpetas_por_vaciar()`, `vaciado_hecho()`). Nunca `Entrada` ni `Notas`.
+  «Déjalo como estaba» justo después devuelve los archivos a su carpeta y anula el vaciado.
+- **Carpetas parecidas:** antes de crear una carpeta al archivar o mover, el flujo principal lee las que existen (`carpetas_conocidas()`:
+  foto de Drive, carpetas pedidas y carpetas de archivos). Si la pedida casi coincide con otra («viaje Roma» y «Viajes/Roma»), pregunta en
+  vez de crear una duplicada, y escribe la ruta tal como ya existe («viajes» pasa a «Viajes»). `carpetas_creadas` recuerda un minuto
+  las que acaba de crear «Sincronizar Drive», aunque Drive aún no las liste.
+- **Memoria de la conversación:** el modelo recibe los últimos mensajes del usuario (hasta `MEMORIA_MENSAJES`, de los últimos
+  `MEMORIA_MIN` minutos) con lo que se le contestó. Sirve para entender una corrección («no, quiero que…»). Más mensajes son más texto
+  para Gemini; `MEMORIA_MENSAJES = 0` la apaga. No está medida con la evaluación.
 - **Mover carpetas:** «mete la carpeta Viajes dentro de Fotos» (por texto o por voz, una o varias a la vez, creando el destino si no
   existe) se reconoce por código. «Revisar Drive» busca las carpetas en el árbol real y decide qué se puede mover (no `Entrada` ni
   `Notas`, ni una dentro de sí misma, ni a más de 3 niveles, ni si en el destino ya hay otra con ese nombre); la secretaria mueve la

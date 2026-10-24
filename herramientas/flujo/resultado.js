@@ -305,7 +305,9 @@ function textoMover({ plan, creado, preparados, movidos, anotados }) {
       case 'ya_esta':
         return `«${limpiar(e.origen)}» ya está dentro de «${limpiar(e.destino)}».`;
       case 'choque':
-        return `Ya hay una carpeta «${limpiar(e.nombre)}» dentro de «${limpiar(e.destino)}».`;
+        return `Ya hay una carpeta «${limpiar(e.nombre)}» dentro de «${limpiar(e.destino)}». ¿Paso los archivos de «${limpiar(e.ruta ?? e.nombre)}» a «${limpiar(e.destino)}/${limpiar(e.nombre)}»?`;
+      case 'parecida':
+        return `Dentro de «${limpiar(e.destino)}» ya está «${limpiar(e.parecida)}», que se parece a «${limpiar(e.nombre)}». ¿Paso los archivos de «${limpiar(e.ruta ?? e.nombre)}» a «${limpiar(e.parecida)}»?`;
       case 'profundidad':
         return `Así quedaría en «${limpiar(e.ruta)}», a más de 3 niveles. Prueba con otro destino.`;
       default:
@@ -320,12 +322,17 @@ function textoMover({ plan, creado, preparados, movidos, anotados }) {
     return e.error === 'pedido' ? fallo(frase(e), 'mover_carpeta: pedido sin origen o destino') : { texto: frase(e) };
   }
   const rechazos = (r.rechazos ?? []).map(frase);
+  // Con UNA sola carpeta igual o parecida en el destino (y nada más), la propuesta de juntarlas queda abierta: «sí» la hace 
+  const juntables = (r.rechazos ?? []).filter((e) => e.error === 'choque' || e.error === 'parecida');
+  const sugerencia = juntables.length === 1 && (r.rechazos ?? []).length === 1
+    ? `mueve los archivos de ${juntables[0].ruta ?? juntables[0].nombre} a ${juntables[0].error === 'choque' ? `${juntables[0].destino}/${juntables[0].nombre}` : juntables[0].parecida}`
+    : null;
   const previstos = (preparados ?? []).filter((x) => x && x.mover);
   if (previstos.length === 0) {
     if (r.crear && !(creado && !creado.error && creado.statusCode >= 200 && creado.statusCode < 300)) {
       return fallo(`Drive no me ha dejado crear la carpeta «${limpiar(r.crear.nombre)}» (${motivoDrive(creado)}). No he movido nada.`, `Crear en Drive: ${motivoDrive(creado)}`);
     }
-    return rechazos.length ? { texto: rechazos.join('\n') } : fallo('No he podido mover esa carpeta.', 'Revisar Drive no devolvió movimientos ni rechazos');
+    return rechazos.length ? { texto: rechazos.join('\n'), ...(sugerencia ? { sugerencia } : {}) } : fallo('No he podido mover esa carpeta.', 'Revisar Drive no devolvió movimientos ni rechazos');
   }
   const hechos = [];
   const fallos = [];
@@ -646,9 +653,12 @@ function partir(bloques, limite = LIMITE_MENSAJE) {
   return mensajes;
 }
 
-function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = '', archivosPendientes = [], proyectos = [], mensaje = '', drive = {} }) {
+function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = '', archivosPendientes = [], proyectos = [], mensaje = '', drive = {}, etiquetas = [] }) {
   const MENSAJE_FALLO = textoFallo(mensaje); // sombrea al de arriba: dice qué mensaje falló
-  const erroresEscritura = escrituras.map((e) => e?.error).filter(Boolean).map(textoError);
+  // Pedir que se vacíe una carpeta es un extra (base de datos 1.5): si falla (por ejemplo, sin actualizar la base de datos a la 1.5), lo demás sigue bien y no se avisa de un fallo
+  // (también anular un vaciado al deshacer un movimiento)
+  const esExtra = (i) => typeof etiquetas[i] === 'string' && etiquetas[i].startsWith('pedir vaciar ');
+  const erroresEscritura = escrituras.map((e, i) => (esExtra(i) ? null : e?.error)).filter(Boolean).map(textoError);
   const filasEscritas = escrituras.filter((e) => e && typeof e.id === 'string');
   const avisos = [...(meta.avisos ?? [])];
   let error = meta.error ?? null;
@@ -722,6 +732,17 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
     mensajes = [r.texto];
     if (r.error) error = r.error;
     if (r.fallo) falloFlujo = true;
+    // La propuesta de juntarlas queda abierta 
+    if (r.sugerencia) {
+      preguntaDrive = {
+        pregunta: r.texto,
+        pregunta_pendiente: true,
+        hilo: [
+          { rol: 'user', texto: mensaje || '(mover carpeta)' },
+          { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', motivo: 'sugerencia', origen: 'codigo', orden: r.sugerencia, pregunta: r.texto, items: [], respuesta_usuario: r.texto }) },
+        ],
+      };
+    }
   } else if (meta.intencion === 'ver_archivos') {
     const erroresLectura = lecturas.map((e) => e?.error).filter(Boolean).map(textoError);
     if (erroresLectura.length) {
@@ -788,6 +809,43 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
     } else {
       mensajes = [textoCarpetasPedidas(rutas)];
     }
+  } else if (meta.intencion === 'mover_archivos' && meta.mover_archivos?.deshacer) {
+    // «Déjalo como estaba» 
+    const n = filasEscritas.length;
+    const destinos = [...new Set(filasEscritas.map((f) => f.carpeta_destino).filter(Boolean))];
+    mensajes = n === 0
+      ? ['Esos archivos ya no están, no he podido devolverlos.']
+      : [`Hecho, como estaba: ${n === 1 ? 'el archivo vuelve' : `${n} archivos vuelven`} a ${destinos.map((d) => `«${limpiar(d)}»`).join(' y ') || 'su carpeta'}. En unos segundos ${n === 1 ? 'estará' : 'estarán'} en Drive.`];
+  } else if (meta.intencion === 'mover_archivos' && meta.mover_archivos?.esos) {
+    // «Mueve esos archivos a X» 
+    const n = filasEscritas.length;
+    mensajes = n === 0 ? ['Esos archivos ya no están.'] : [`Hecho: ${n === 1 ? 'el archivo' : `${n} archivos`} a «${limpiar(meta.mover_archivos.destino)}». En unos segundos ${n === 1 ? 'estará' : 'estarán'} en Drive.`];
+  } else if (meta.intencion === 'mover_archivos' && meta.mover_archivos?.nombre) {
+    // Un archivo concreto por su nombre 
+    const m = meta.mover_archivos;
+    const n = filasEscritas.length;
+    mensajes = n === 0
+      ? [`No tengo ningún archivo que se llame «${limpiar(m.nombre)}».`]
+      : [`Hecho: ${n === 1 ? `«${limpiar(m.nombre)}»` : `${n} archivos «${limpiar(m.nombre)}»`} a «${limpiar(m.destino)}». En unos segundos estará en Drive.`];
+  } else if (meta.intencion === 'mover_archivos' && meta.mover_archivos) {
+    // Mover las fotos o los archivos de una carpeta a otra : lo que de verdad cambió de carpeta en la base de datos
+    const m = meta.mover_archivos;
+    const n = filasEscritas.length;
+    const que = m.solo_fotos ? (n === 1 ? 'foto' : 'fotos') : n === 1 ? 'archivo' : 'archivos';
+    // Si la carpeta de origen quedó apuntada para vaciarla (base de datos 1.5), se dice; si no (sin actualizar la base de datos a la 1.5, recién creada o es Entrada o Notas), cómo borrarla
+    const apuntada = escrituras.some((e) => e && e.pedida === true);
+    // Entrada y Notas no se borran aunque se queden vacías: no se sugiere borrarlas 
+    const protegida = /^(?:entrada|notas)$/i.test(String(m.origen ?? '').trim());
+    const vaciar = protegida
+      ? ''
+      : apuntada
+        ? `Cuando «${limpiar(m.origen)}» se quede vacía, la mando a la papelera.`
+        : `Si «${limpiar(m.origen)}» se queda vacía: «borra la carpeta ${limpiar(m.origen)}».`;
+    mensajes = n === 0
+      ? [`No tengo ${m.solo_fotos ? 'fotos guardadas' : 'archivos guardados'} en «${limpiar(m.origen)}».`]
+      : m.juntar
+        ? [`Ya había «${limpiar(m.destino)}», así que he juntado ahí lo de «${limpiar(m.origen)}» (${n} ${que}). En unos segundos estará en Drive.${vaciar ? `\n${vaciar}` : ''}`]
+        : [`Hecho: ${n} ${que} de «${limpiar(m.origen)}» a «${limpiar(m.destino)}». En unos segundos estarán en Drive.${vaciar ? `\n${vaciar}` : ''}`];
   } else if (meta.intencion === 'deshacer') {
     mensajes = filasEscritas.length === 0 ? ['No he podido recuperar nada.'] : [textoRecuperado(filasEscritas)];
     if (filasEscritas.length === 0) error = 'La recuperación no afectó a ningún item';
@@ -835,9 +893,27 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
   // cambio, un fallo POSTERIOR (escritura o lectura) solo lo conoce este nodo y, sin esto, el mensaje quedaría como procesado
   // y sin error. Una escritura fallida lo marca además como no procesado.
   // La confirmación de borrar en Drive se guarda aquí (Planificar no sabía qué había en las carpetas): la pregunta queda abierta con su lista.
+  // Los archivos que se acaban de mover o guardar quedan anotados en el hilo del mensaje : «mueve esos archivos a X» los encuentra
+  const archivosTocados = ['mover_archivos', 'archivar'].includes(meta.intencion) && meta.ok && error === null
+    ? filasEscritas.filter((e) => typeof e.drive_file_id === 'string' && /^[0-9a-f-]{36}$/i.test(e.id)).map((e) => e.id).slice(0, 50)
+    : [];
+  // Y de dónde salió cada uno, para «déjalo como estaba» : por id (previas) o por la carpeta nueva (vuelta: nueva → anterior)
+  const ma = meta.mover_archivos ?? {};
+  const previas = ma.previas && typeof ma.previas === 'object' ? ma.previas : {};
+  const vueltaPor = ma.vuelta && typeof ma.vuelta === 'object' ? ma.vuelta : {};
+  const deshacerMov = meta.intencion === 'mover_archivos'
+    ? filasEscritas
+        .filter((e) => archivosTocados.includes(e.id))
+        .map((e) => ({ id: e.id, a: e.carpeta_destino, de: previas[e.id] ?? vueltaPor[e.carpeta_destino] ?? null }))
+        .filter((d) => typeof d.de === 'string' && typeof d.a === 'string' && d.de !== d.a)
+    : [];
+  const vaciarMov = Array.isArray(ma.vaciar) && escrituras.some((e) => e && e.pedida === true) ? ma.vaciar.filter((r) => typeof r === 'string') : [];
+  const nota = { intencion: 'movidos', motivo: 'movidos', origen: 'codigo', ids: archivosTocados, ...(deshacerMov.length > 0 ? { deshacer: deshacerMov } : {}), ...(vaciarMov.length > 0 ? { vaciar: vaciarMov } : {}) };
   const anotacion = meta.ok && error !== null
     ? { error: String(error).slice(0, MAX_ERROR_GUARDADO), ...(erroresEscritura.length > 0 ? { procesado: false } : {}) }
-    : preguntaDrive;
+    : preguntaDrive ?? (archivosTocados.length > 0
+      ? { hilo: [{ rol: 'user', texto: String(mensaje || '(archivos)').slice(0, 500) }, { rol: 'model', texto: JSON.stringify(nota) }] }
+      : null);
 
   // Preguntas que el usuario dejó sin contestar al escribir otra cosa: se cerraron sin hacer nada y se le dice ANTES de la respuesta
   const ignoradas = Array.isArray(meta.preguntas_ignoradas) ? meta.preguntas_ignoradas.filter((p) => typeof p === 'string' && p.trim() !== '') : [];
@@ -912,6 +988,8 @@ const salida = resolver({
   archivosPendientes,
   proyectos: construccion.proyectos ?? [],
   escrituras: $('Escribir en Supabase').all().map((i) => i.json),
+  // Qué era cada escritura (mismo orden): para no tomar por un fallo el de un extra
+  etiquetas: $('Planificar').all().map((i) => i.json.etiqueta),
   // Con la rama de carpetas, lo que llega es lo de Drive (Revisar Drive, Marcar borrado): los archivos contados se leen de su nodo
   lecturas: meta.carpetas ? todos('Contar archivos') : $input.all().map((i) => i.json),
   drive: { revisados: todos('Revisar Drive'), mandados: todos('Mandar a la papelera'), marcado: nivel('Marcar borrado'), creado: nivel('Crear en Drive'), preparados: todos('Preparar movimientos'), movidos: todos('Mover en Drive'), anotados: todos('Anotar movimiento') },

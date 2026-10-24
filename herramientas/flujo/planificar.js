@@ -15,9 +15,9 @@
 // Las consultas (GET) no pasan por "Escribir en Supabase": n8n no permite una expresión en
 // "Send Body", así que el GET lo ejecuta el nodo "Leer consulta" con meta.consulta_url.
 
-const INTENCIONES = ['guardar', 'consultar', 'corregir', 'completar', 'recordar', 'aclarar', 'descartar', 'charla', 'archivar', 'carpetas', 'cancelar', 'ver_archivos', 'crear_carpeta', 'mover_carpeta', 'borrar_drive', 'horario', 'ayuda', 'proyectos', 'proyecto'];
+const INTENCIONES = ['guardar', 'consultar', 'corregir', 'completar', 'recordar', 'aclarar', 'descartar', 'charla', 'archivar', 'carpetas', 'cancelar', 'ver_archivos', 'crear_carpeta', 'mover_carpeta', 'mover_archivos', 'borrar_drive', 'horario', 'ayuda', 'proyectos', 'proyecto'];
 // Intenciones que no crean items (si el modelo devuelve alguno, se ignora)
-const SIN_ITEMS = ['charla', 'horario', 'archivar', 'carpetas', 'cancelar', 'completar', 'ver_archivos', 'crear_carpeta', 'mover_carpeta', 'borrar_drive', 'ayuda', 'proyectos', 'proyecto'];
+const SIN_ITEMS = ['charla', 'horario', 'archivar', 'carpetas', 'cancelar', 'completar', 'ver_archivos', 'crear_carpeta', 'mover_carpeta', 'mover_archivos', 'borrar_drive', 'ayuda', 'proyectos', 'proyecto'];
 // Niveles de una carpeta pedida (Fotos/Viajes/2026)
 const NIVELES_CARPETA_MAX = 3;
 const MAX_CARPETAS_PEDIDAS = 10; // carpetas que se pueden pedir en un solo mensaje
@@ -219,7 +219,7 @@ function normalizarSeleccion(valor, refs, ref, config, avisos) {
       proyecto: textoONull(f.proyecto) ? normalizarProyecto(f.proyecto, config.proyectos, [], `${ref}.filtro.proyecto`) : null,
     };
   };
-  // Varias secciones a la vez (solo las genera el código, sección 61): cada una con su filtro
+  // Varias secciones a la vez (solo las genera el código): cada una con su filtro
   if (Array.isArray(v.filtros) && v.filtros.length > 0 && v.filtros.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
     return { filtros: v.filtros.map(normFiltro) };
   }
@@ -241,10 +241,15 @@ const TEXTO_CHARLA_SEGURO = 'No he apuntado nada.';
 // (si la charla trae un dato que sí se guarda en la memoria, Resultado ya lo dice: el texto seguro sería contradictorio)
 // El modelo no sabe que se pueden mover carpetas : si dice que no puede, se le corrige con el ejemplo de cómo pedirlo
 const DICE_QUE_NO_MUEVE = /\bno (?:puedo|se|sé) (?:mover|meter|cambiar de sitio|reorganizar)(?: [a-záéíóúñ]+){0,3} carpetas?\b/i;
-const TEXTO_SI_MUEVE_CARPETAS = 'Sí puedo mover carpetas. Dime, por ejemplo: «mete la carpeta Viajes dentro de Fotos».';
+// (un caso real repitió esta frase cinco veces; ahora dice las dos formas, lo de dentro y la carpeta entera)
+const TEXTO_SI_MUEVE_CARPETAS = 'Sí puedo mover carpetas. Dímelo así: «mueve todo lo de Notas a Viajes/Budapest» (lo de dentro) o «mete la carpeta Budapest dentro de Viajes» (la carpeta entera).';
+// Lo mismo con los archivos ya guardados : «mueve las fotos de Budapest a Viajes/Budapest» se hace por código
+const DICE_QUE_NO_MUEVE_ARCHIVOS = /\b(?:no|ni) (?:puedo|se|sé) (?:mover|cambiar de sitio|cambiar de carpeta|pasar)(?: [a-záéíóúñ]+){0,3} (?:archivos|fotos|documentos|imagenes|imágenes|ficheros)\b/i;
+const TEXTO_SI_MUEVE_ARCHIVOS = 'Sí puedo moverlos. Dímelo así: «mueve todo lo de Notas a Viajes/Budapest» o «mueve las fotos de Budapest a Viajes/Budapest».';
 function textoCharla(texto, guardaDato = false) {
   const t = String(texto ?? '').replace(/\s+/g, ' ').trim().slice(0, 400);
   if (DICE_QUE_NO_MUEVE.test(t)) return TEXTO_SI_MUEVE_CARPETAS;
+  if (DICE_QUE_NO_MUEVE_ARCHIVOS.test(t)) return TEXTO_SI_MUEVE_ARCHIVOS;
   if (!t || PROMETE_ALGO.test(sinAcentos(t))) return guardaDato ? 'De acuerdo.' : TEXTO_CHARLA_SEGURO;
   return t;
 }
@@ -624,6 +629,32 @@ function validarRespuesta(texto, config, refs, refsArchivos = {}, opciones = {})
     }
     moverCarpeta = { origenes, destino, crear: m.crear === true };
   }
+  // Mover fotos o archivos ya guardados de una carpeta a otra: origen obligatorio y destino
+  // opcional (sin él, se le pregunta adónde). Qué archivos son lo decide planMoverArchivos con las carpetas conocidas.
+  let moverArchivos = null;
+  if (datos.intencion === 'mover_archivos') {
+    const m = typeof datos.mover_archivos === 'object' && datos.mover_archivos !== null && !Array.isArray(datos.mover_archivos) ? datos.mover_archivos : {};
+    const limpia = (t) => {
+      const segs = typeof t === 'string' ? segmentosCarpeta(t.split('/').map((x) => x.trim()).join('/')) : null;
+      return segs ? segs.join('/') : null;
+    };
+    const origen = limpia(m.origen);
+    const sinDestino = m.destino === null || m.destino === undefined || m.destino === '';
+    const destino = sinDestino ? null : limpia(m.destino);
+    // Un archivo concreto por su nombre : nombre y destino, sin carpeta de origen
+    const nombre = typeof m.nombre === 'string' && m.nombre.trim() !== '' && m.nombre.length <= 150 && !/[\\/\u0000-\u001f]/.test(m.nombre) ? m.nombre.trim() : null;
+    if (nombre) {
+      if (!destino) fallo(`mover_archivos con nombre necesita la carpeta de destino: ${JSON.stringify(m).slice(0, 160)}`);
+      moverArchivos = { nombre, destino, todos: m.todos === true };
+    } else if (m.esos === true) {
+      // «Mueve esos archivos a X» : los últimos que movió o guardó la secretaria
+      if (!destino) fallo(`mover_archivos de «esos» necesita la carpeta de destino: ${JSON.stringify(m).slice(0, 160)}`);
+      moverArchivos = { esos: true, destino };
+    } else {
+      if (!origen || (!sinDestino && !destino)) fallo(`mover_archivos necesita una carpeta de origen y, si la dice, una de destino (rutas de 1 a ${NIVELES_CARPETA_MAX} niveles): ${JSON.stringify(m).slice(0, 160)}`);
+      moverArchivos = { origen, destino, solo_fotos: m.solo_fotos === true };
+    }
+  }
 
   // Horario fijo semanal: bloques {titulo, dias (1-7), desde, hasta}; uno por día al guardarlo
   let horarioNuevo = null;
@@ -665,7 +696,7 @@ function validarRespuesta(texto, config, refs, refsArchivos = {}, opciones = {})
 
   const consulta = datos.intencion === 'consultar' ? normalizarConsulta(datos.consulta, config, avisos) : null;
 
-  return { datos: { intencion: datos.intencion, items, pregunta, memoriaNueva, nombreNuevo, nombreUsuario, correccion, seleccion, proyecto, consulta, archivos, filtroArchivos, rutasNuevas, borrarDrive, moverCarpeta, horarioNuevo, respuestaUsuario }, avisos };
+  return { datos: { intencion: datos.intencion, items, pregunta, memoriaNueva, nombreNuevo, nombreUsuario, correccion, seleccion, proyecto, consulta, archivos, filtroArchivos, rutasNuevas, borrarDrive, moverCarpeta, moverArchivos, horarioNuevo, respuestaUsuario }, avisos };
 }
 
 // --- Archivos: carpeta pedida, referencias y nombres ---
@@ -703,8 +734,8 @@ function nombreSeguro(nombre) {
 }
 
 const extensionDe = (n) => /\.([A-Za-z0-9]{1,5})$/.exec(String(n ?? ''))?.[1] ?? '';
-// El nombre que pone el sistema al recibir una foto: "2026-10-12 1830 · WhatsApp.jpg"
-const NOMBRE_AUTOMATICO = /^(\d{4}-\d{2}-\d{2} \d{4}) · WhatsApp\.[A-Za-z0-9]{1,5}$/;
+// El nombre que pone el sistema al recibir una foto: "2026-10-12 1830 · WhatsApp.jpg" (desde la sección 76, "… · WhatsApp k3f9.jpg")
+const NOMBRE_AUTOMATICO = /^(\d{4}-\d{2}-\d{2} \d{4}) · WhatsApp(?: [0-9a-z]{4})?\.[A-Za-z0-9]{1,5}$/;
 
 // Nuevo nombre de cada archivo (o null si se queda como está):
 //   - si el usuario da un nombre, ese (con (1), (2)… si son varios) y la extensión de siempre;
@@ -1078,14 +1109,18 @@ const MANUAL = {
       '• Para clasificarlo, *responde a su foto* (o a mi confirmación) con, por ejemplo, «guárdala en Fotos/Viajes» o «es la factura de la luz». También en bloque: «las 3 últimas a Fotos».\n' +
       '• O escríbelo directamente en el *pie de la foto*: si pones una ruta («Fotos/Viajes») la guardo ahí sin preguntarte.\n' +
       '• Para recibirlos: «dame las fotos» (te las mando), «dime qué archivos tengo» o /files (la lista con enlaces).\n' +
-      '• Para moverlos a otra carpeta, también con un audio: «mete las fotos en Fotos/Viajes», «muévelas a Documentos».\n' +
+      '• Si mandas varias seguidas, te contesto con un solo mensaje, y «ponlo en Budapest» (sin citar nada) vale para todas.\n' +
+      '• Si la carpeta no existe pero hay una parecida («Budapest» y ya tienes «Viajes/Budapest»), te pregunto dónde: contesta con el número.\n' +
+      '• Para cambiar de carpeta las ya guardadas, también con un audio: «mueve las fotos de Budapest a Viajes/Budapest» («los archivos» son todos) o «mueve todo lo de Notas a Budapest». Uno solo, con su nombre exacto: «mueve 2026-10-23 1504 · WhatsApp k3f9.jpg a Notas». Y los que acabo de mover o guardar: «muévelos a Viajes» o «mueve esos archivos a Viajes». Si te equivocas, justo después: «déjalo como estaba» o «deshaz».\n' +
       '• Nada se clasifica solo: lo que no clasifiques sigue en Entrada y te lo recuerdo.',
   },
   drive: {
     titulo: 'Carpetas de Drive',
     texto:
       '• «crea la carpeta Proyectos dentro de Trabajo» (hasta 3 niveles). Para ver todas: /folders.\n' +
-      '• Mover una carpeta dentro de otra: «mete la carpeta Viajes dentro de Fotos». Va con todo lo que tenga dentro. No se mueven Entrada ni Notas, ni puede quedar a más de 3 niveles.\n' +
+      '• Mover una carpeta dentro de otra: «mete la carpeta Viajes dentro de Fotos» o «mueve Budapest a Viajes». Varias a la vez: «crea la carpeta Viajes y mete dentro Budapest y Roma». Va con todo lo que tenga dentro. No se mueven Entrada ni Notas, ni puede quedar a más de 3 niveles.\n' +
+      '• Si te propongo algo («¿Paso los archivos de «Budapest» a «Viajes/Budapest»?»), basta con «sí».\n' +
+      '• Lo que pides se ve en Drive en unos segundos. Si al mover sus archivos una carpeta se queda vacía, la mando a la papelera (nunca Entrada ni Notas).\n' +
       '• Borrar: «borra la carpeta Fotos/Viajes», «vacía la carpeta Facturas» (quita lo de dentro y deja la carpeta), «borra la foto del DNI». Te enseño lo que se borraría y solo lo mando a la papelera de Drive si me dices que sí (se recupera unos 30 días). Entrada y Notas no se borran enteras.\n' +
       '• Si cambias algo a mano en Drive, lo anoto y te aviso.',
   },
@@ -1273,6 +1308,9 @@ const ARTICULO_MOVER = '(?:las |los |la |el )?';
 const MOVER_LISTA = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} ${ARTICULO_MOVER}carpetas? (.+) ${ENLACE_MOVER} ${ARTICULO_MOVER}(?:carpeta )?(.+)$`, 'd');
 const MOVER_CREANDO = new RegExp(`${PREFIJO_MOVER}(?:crea|creas|crees|crear|haz|hagas|hacer|genera|generes)(?:me)? (?:una |la |otra )?carpeta (?:llamada |que se llame |que se llama |de nombre |con el nombre )?(.+?) (?:y luego |y despues |y ahora |y |e |, )${VERBO_MOVER} (?:ahi dentro |ahi |dentro de ella |dentro |en ella |en esa )?${ARTICULO_MOVER}(?:carpetas? )?(?:de )?(.+)$`, 'd');
 const MOVER_DESTINO_PRIMERO = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} (?:dentro de |en )${ARTICULO_MOVER}(?:carpeta )?(.+?) (?:las |los |la |el )carpetas? (?:de )?(.+)$`, 'd');
+const ENLACE_SUELTO = '(?:a dentro de|adentro de|dentro de|al interior de|debajo de|en|a)';
+const MOVER_SUELTO = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} ${ARTICULO_MOVER}(.+) ${ENLACE_SUELTO} ${ARTICULO_MOVER}(?:carpeta )?(.+)$`, 'd');
+const MOVER_TEMA_PRIMERO = new RegExp(`${PREFIJO_MOVER}${ARTICULO_MOVER}(?:carpetas? )?(.+?) (?:la|las|lo|los) ${VERBO_MOVER} ${ENLACE_SUELTO} ${ARTICULO_MOVER}(?:carpeta )?(.+)$`, 'd');
 const MAX_CARPETAS_A_MOVER = 6;
 // Parte «A, B y C» por comas, «y» y «e» (sin partir lo que va entre comillas)
 function partirLista(texto) {
@@ -1299,7 +1337,7 @@ function partirLista(texto) {
   piezas.push(actual);
   return piezas.map((x) => x.trim()).filter(Boolean);
 }
-function interpretarMoverCarpeta(mensaje) {
+function interpretarMoverCarpeta(mensaje, conocidas = []) {
   if (typeof mensaje !== 'string') return null;
   const t = mensaje.normalize('NFC').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
   if (t === '' || t.length > 260) return null;
@@ -1321,23 +1359,420 @@ function interpretarMoverCarpeta(mensaje) {
   const mayuscula = (r) => (r === r.toLowerCase() ? r.replace(/(^|\/)(\p{L})/gu, (x, a, b) => `${a}${b.toUpperCase()}`) : r);
   let m = MOVER_CREANDO.exec(base);
   if (m) {
-    const destino = ruta(trozo(m, 1));
+    const destino = nombre(trozo(m, 1));
     const origenes = lista(trozo(m, 2));
     return destino && origenes ? { origenes, destino: mayuscula(destino), crear: true } : null;
   }
   m = MOVER_LISTA.exec(base);
   if (m) {
     const origenes = lista(trozo(m, 1));
-    const destino = ruta(trozo(m, 2));
+    const destino = nombre(trozo(m, 2));
     return origenes && destino ? { origenes, destino, crear: false } : null;
   }
   m = MOVER_DESTINO_PRIMERO.exec(base);
   if (m) {
-    const destino = ruta(trozo(m, 1));
+    const destino = nombre(trozo(m, 1));
     const origenes = lista(trozo(m, 2));
     return origenes && destino ? { origenes, destino, crear: false } : null;
   }
+  // Sin la palabra «carpeta» delante del nombre(«Mueve Budapest a la carpeta Viajes», «Mueve viaje tren de hierro a
+  // dentro de Viajes»): solo si CADA nombre es una carpeta que ya existe. Así «mueve la cita al viernes» o «pon la lavadora a las 5» no se toman
+  // por carpetas. «La carpeta Budapest la muevas a Viajes» (el nombre delante, con «la carpeta») vale siempre.
+  const sinEnlace = (o) => o.replace(/ (?:a|al|hacia)$/, '');
+  m = MOVER_TEMA_PRIMERO.exec(base);
+  if (m) {
+    const conPalabra = /carpetas? $/.test(base.slice(0, m.indices[1][0]));
+    const origenes = lista(trozo(m, 1));
+    const destino = nombre(trozo(m, 2));
+    if (origenes && destino && (conPalabra || origenes.every((o) => carpetaConocida(o, conocidas)))) return { origenes, destino, crear: false };
+  }
+  m = MOVER_SUELTO.exec(base);
+  if (m) {
+    const origenes = lista(sinEnlace(trozo(m, 1)));
+    const destino = nombre(trozo(m, 2));
+    // El destino también tiene que sonar a carpeta: una que existe, una ruta con «/» o dicha con «la carpeta» («pon Budapest en la lista» no lo es)
+    const destinoClaro = Boolean(destino) && (carpetaConocida(destino, conocidas) || destino.includes('/') || /carpeta $/.test(base.slice(0, m.indices[2][0])));
+    if (origenes && destino && destinoClaro && origenes.every((o) => carpetaConocida(o, conocidas)) && !origenes.some((o) => clavesIguales(o, destino))) return { origenes, destino, crear: false };
+  }
   return null;
+}
+
+// --- Carpetas conocidas (base de datos 1.5): las que existen en Drive, las pedidas y las de los archivos clasificados ---
+// Comparar nombres de carpeta sin mayúsculas, tildes, artículos ni la palabra «carpeta»: «el tren de hierro» y «Tren de Hierro» son lo mismo.
+const VACIAS_CARPETA = new Set(['de', 'del', 'la', 'las', 'el', 'los', 'lo', 'y', 'e', 'a', 'al', 'en', 'un', 'una', 'mi', 'mis', 'carpeta', 'carpetas']);
+const palabrasCarpeta = (s) => sinAcentos(s).replace(/[^\p{L}\p{N}/ ]+/gu, ' ').split(/[\s/]+/).filter((w) => w && !VACIAS_CARPETA.has(w));
+const claveCarpeta = (s) => palabrasCarpeta(s).join(' ');
+const clavesIguales = (a, b) => claveCarpeta(a) !== '' && claveCarpeta(a) === claveCarpeta(b);
+const ultimoTramo = (r) => String(r ?? '').split('/').at(-1);
+// Distancia de edición (para erratas de una o dos letras: «Viaje» y «Viajes», «Budapets» y «Budapest»)
+function distanciaCarpeta(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+// ¿Se parecen dos NOMBRES de carpeta (un tramo, sin ruta)? Iguales, uno contiene todas las palabras del otro («viaje Budapest» y «Budapest»;
+// «viaje Tren de Hierro» y «Tren de Hierro») o una errata pequeña en un nombre de al menos 5 letras.
+function nombresParecidos(a, b) {
+  const pa = palabrasCarpeta(a);
+  const pb = palabrasCarpeta(b);
+  if (pa.length === 0 || pb.length === 0) return false;
+  const ka = pa.join(' ');
+  const kb = pb.join(' ');
+  if (ka === kb) return true;
+  const [corto, largo] = pa.length <= pb.length ? [pa, pb] : [pb, pa];
+  if (corto.every((w) => largo.includes(w))) return true;
+  return Math.min(ka.length, kb.length) >= 5 && distanciaCarpeta(ka, kb) <= 2;
+}
+// ¿Es este texto una carpeta que existe? Por su ruta entera, por su último tramo, porque todas sus palabras están en uno («tren de hierro» y
+// «viaje Tren de Hierro») o por una errata pequeña. NO al revés: «dos fotos de Budapest» no es la carpeta «Budapest» (tiene palabras de más).
+// Lo exacto lo decide después «Revisar Drive» con el árbol real.
+function carpetaConocida(texto, conocidas) {
+  const rutas = (Array.isArray(conocidas) ? conocidas : []).map((c) => (typeof c === 'string' ? c : c?.ruta)).filter((r) => typeof r === 'string' && r !== '');
+  const pt = palabrasCarpeta(texto);
+  if (rutas.length === 0 || pt.length === 0) return false;
+  const kt = pt.join(' ');
+  return rutas.some((r) => {
+    if (clavesIguales(r, texto) || clavesIguales(ultimoTramo(r), texto)) return true;
+    if (texto.includes('/')) return false;
+    const pk = palabrasCarpeta(ultimoTramo(r));
+    const kk = pk.join(' ');
+    return pt.every((w) => pk.includes(w)) || (Math.min(kt.length, kk.length) >= 5 && distanciaCarpeta(kt, kk) <= 2);
+  });
+}
+
+// --- Mover las fotos o los archivos de una carpeta a otra: «mueve las fotos de Budapest a Viajes/Budapest» ---
+// Por código. Mueve lo que la secretaria tiene clasificado en esa carpeta (y en las de dentro): cambia su carpeta y «Sincronizar Drive» los
+// mueve de verdad en unos segundos. Lo que subiste a mano a Drive no lo conoce y se queda. «Las fotos» son solo las imágenes; «los archivos»,
+// todo. Entrada (los que aún no tienen sitio) lo decide el modelo, como siempre. Devuelve { origen, destino (o null si no lo dice), solo_fotos }.
+const TIPO_ARCHIVOS = '(fotos?|imagenes|imagen|archivos?|documentos?|ficheros?|pdfs?|cosas)';
+const CANTIDAD_ARCHIVOS = '(?:todas |todos |toda |todo )?(?:las |los |mis |la |el )?(?:\\d+ |dos |tres |cuatro |cinco |seis |siete |ocho |nueve |diez )?';
+const DE_CARPETA = '(?: que (?:hay|tengo|estan|guarde|guardaste))? (?:de|del|en|dentro de) (?:la |el )?(?:carpeta )?';
+const MOVER_ARCHIVOS = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} ${CANTIDAD_ARCHIVOS}${TIPO_ARCHIVOS}${DE_CARPETA}(.+)$`, 'd');
+const MOVER_ARCHIVOS_TEMA = new RegExp(`${PREFIJO_MOVER}${CANTIDAD_ARCHIVOS}${TIPO_ARCHIVOS}${DE_CARPETA}(.+?) (?:las|los|la|lo) ${VERBO_MOVER}(?: (.+))?$`, 'd');
+const ENLACE_DESTINO = / (?:a dentro de|adentro de|dentro de|al interior de|hacia|en|a) (?:las |los |la |el )?(?:carpeta (?:de |del )?)?/g;
+function interpretarMoverArchivos(mensaje, conocidas = []) {
+  if (typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
+  if (t === '' || t.length > 200) return null;
+  const base = sinAcentos(t);
+  if (base.length !== t.length) return null;
+  const ruta = (texto) => {
+    const limpio = String(texto ?? '').replace(/\s+(?:barra|slash)\s+/gi, '/').split('/').map((x) => x.replace(/^[«"“'`\s]+|[»"”'`\s]+$/g, ''));
+    if (limpio.some((x) => x === '' || x.split(' ').length > 4)) return null;
+    const segs = segmentosCarpeta(limpio.join('/'));
+    return segs ? segs.join('/') : null;
+  };
+  const de = (m, g) => (m.indices[g] ? t.slice(m.indices[g][0], m.indices[g][1]) : '');
+  let origen = null;
+  let destino = null;
+  let tipo = '';
+  let m = MOVER_ARCHIVOS_TEMA.exec(base);
+  if (m) {
+    tipo = m[1];
+    origen = ruta(de(m, 2));
+    const resto = de(m, 3).replace(/^(?:a dentro de|adentro de|dentro de|al interior de|hacia|en|a) (?:las |los |la |el )?(?:carpeta )?/i, '');
+    destino = resto ? ruta(resto) : null;
+    if (!origen || (resto && !destino)) return null;
+  } else {
+    m = MOVER_ARCHIVOS.exec(base);
+    if (!m) return null;
+    tipo = m[1];
+    // «de Budapest a Viajes/Budapest»: de los cortes posibles, el que deja como origen una carpeta conocida (el de más a la derecha si ninguna lo es)
+    const resto = de(m, 2);
+    const restoBase = sinAcentos(resto);
+    const cortes = [...restoBase.matchAll(ENLACE_DESTINO)].map((x) => ({ i: x.index, fin: x.index + x[0].length })).reverse();
+    const elegido = cortes.find((c) => carpetaConocida(resto.slice(0, c.i), conocidas)) ?? cortes[0];
+    if (elegido) {
+      origen = ruta(resto.slice(0, elegido.i));
+      destino = ruta(resto.slice(elegido.fin));
+      if (!origen || !destino) return null;
+    } else {
+      origen = ruta(resto);
+      if (!origen) return null;
+    }
+  }
+  if (clavesIguales(origen, 'Entrada')) return null;
+  return { origen, destino, solo_fotos: /^(?:fotos?|imagen|imagenes)$/.test(tipo) };
+}
+
+// --- «Mueve todo lo de Notas a Budapest» ---
+// Mover el CONTENIDO de una carpeta a otra con palabras que no son «las fotos de» ni «los archivos de»: «todo lo de», «todo el contenido de», «lo que
+// hay en», «las cosas de». El origen tiene que ser una carpeta que existe (o decirse «la carpeta X») y el destino sonar a carpeta (existe, se
+// parece a una, lleva «/» o se dice «la carpeta»): «pon todo lo de la compra en la lista» no lo es. Devuelve { origen, destino, solo_fotos: false }.
+const CONTENIDO_CARPETA = '(?:todo lo que hay|todo lo que tengo|lo que hay|lo que tengo|todo el contenido|el contenido|todas las cosas|las cosas|todo lo|todo|lo)';
+const MOVER_CONTENIDO = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} ${CONTENIDO_CARPETA} (?:que hay |que tengo |guardado )?(?:de|del|en|dentro de) (?:la |el )?(carpeta (?:de |del )?)?(.+?) (?:a dentro de|adentro de|dentro de|al interior de|hacia|en|al|a) (?:las |los |la |el )?(carpeta (?:de |del )?)?(.+)$`, 'd');
+function interpretarMoverContenido(mensaje, conocidas = []) {
+  if (typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(/[\u200B-\u200F\u2060-\u2064\uFEFF\u00AD]/g, '').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
+  if (t === '' || t.length > 200) return null;
+  const base = sinAcentos(t);
+  if (base.length !== t.length) return null;
+  const m = MOVER_CONTENIDO.exec(base);
+  if (!m) return null;
+  const ruta = (k) => {
+    const limpio = t.slice(m.indices[k][0], m.indices[k][1]).replace(/\s+(?:barra|slash)\s+/gi, '/').split('/').map((x) => x.replace(/^[«"“'`\s]+|[»"”'`\s]+$/g, ''));
+    if (limpio.some((x) => x === '' || x.split(' ').length > 4)) return null;
+    const segs = segmentosCarpeta(limpio.join('/'));
+    return segs ? segs.join('/') : null;
+  };
+  const origen = ruta(2);
+  const destino = ruta(4);
+  if (!origen || !destino) return null;
+  if (/^(?:lista|listas|agenda|calendario|compra|tareas)\b/.test(sinAcentos(destino))) return null;
+  const origenClaro = Boolean(m[1]) || carpetaConocida(origen, conocidas);
+  const destinoClaro = Boolean(m[3]) || destino.includes('/') || carpetaConocida(destino, conocidas) || (conocidas ?? []).some((c) => nombresParecidos(ultimoTramo(typeof c === 'string' ? c : c?.ruta ?? ''), ultimoTramo(destino)));
+  return origenClaro && destinoClaro && !clavesIguales(origen, destino) ? { origen, destino, solo_fotos: false } : null;
+}
+
+// --- Mover UN archivo por su nombre: «Mueve 2026-10-23 1504 · WhatsApp.jpg a Notas» ---
+// El modelo solo ve los archivos pendientes y los citados: uno ya guardado no lo encontraba. Se reconoce por código: un nombre con extensión de
+// archivo y una carpeta de destino. WhatsApp mete caracteres invisibles al copiar un nombre (U+2060…): se quitan. Devuelve
+// { nombre, destino } o null. El archivo se busca por su nombre exacto en la base de datos (lo hace Planificar).
+const EXT_ARCHIVO = '(?:jpe?g|png|heic|heif|webp|gif|pdf|docx?|xlsx?|pptx?|odt|txt|csv|mp4|mov|m4a|mp3|ogg|opus|wav|zip)';
+// «todos los archivos X» / «los 2 archivos X»: la respuesta a «Hay 2 archivos que se llaman X… ¿Muevo los 2?» 
+const MOVER_UN_ARCHIVO = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} (?:(todos los archivos |todas las fotos |los \\d+ archivos |las \\d+ fotos )|(?:el |la |mi )?(?:(?:archivo|foto|documento|fichero|imagen|pdf) (?:de |del |llamad[oa] |que se llama )?)?)[«"“']?(.+?\\.${EXT_ARCHIVO})[»"”']? (?:a dentro de|adentro de|dentro de|al interior de|hacia|en|a) (?:las |los |la |el )?(?:carpeta (?:de |del )?)?(.+)$`, 'd');
+const INVISIBLES = /[\u200B-\u200F\u2060-\u2064\uFEFF\u00AD]/g;
+function interpretarMoverArchivoNombre(mensaje) {
+  if (typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(INVISIBLES, '').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
+  if (t === '' || t.length > 220) return null;
+  const base = sinAcentos(t);
+  if (base.length !== t.length) return null;
+  const m = MOVER_UN_ARCHIVO.exec(base);
+  if (!m) return null;
+  const nombre = t.slice(m.indices[2][0], m.indices[2][1]).trim();
+  const limpio = t.slice(m.indices[3][0], m.indices[3][1]).replace(/\s+(?:barra|slash)\s+/gi, '/').split('/').map((x) => x.replace(/^[«"“'`\s]+|[»"”'`\s]+$/g, ''));
+  if (nombre.length > 150 || limpio.some((x) => x === '' || x.split(' ').length > 4)) return null;
+  const segs = segmentosCarpeta(limpio.join('/'));
+  return segs ? { nombre, destino: segs.join('/'), ...(m[1] ? { todos: true } : {}) } : null;
+}
+
+// --- «Mueve esos archivos a Viajes/Budapest»: los últimos que movió o guardó la secretaria ---
+// El modelo veía la conversación pero no podía señalar esos archivos (solo tiene referencias de los pendientes y del citado). Cada vez que la
+// secretaria mueve o guarda archivos, anota sus ids en el hilo del mensaje («Resultado»); «Construir petición» busca el último en la
+// conversación. Hace falta una referencia clara: «esos», «estos», «los de antes», «los mismos» o «muévelos». Con «muévelos/ponlos a X» el destino
+// tiene que sonar a carpeta (una que existe, una ruta con «/» o dicha con «la carpeta»): «ponlas en la nevera» no lo es. Devuelve { destino } o null.
+const DESTINO_ESOS = ' (?:a dentro de|adentro de|dentro de|al interior de|hacia|en|a) (?:las |los |la |el )?(?:carpeta (?:de |del )?)?(.+)$';
+const NUMERO_ESOS = '(?:dos |tres |cuatro |cinco |seis |siete |ocho |nueve |diez |\\d+ )?';
+const TIPO_ESOS = '(?:archivos?|fotos?|imagen|imagenes|documentos?|ficheros?|pdfs?)';
+const ANTES_ESOS = '(?: de antes| de hace un momento| que (?:acabas de|has) (?:mover|movido|guardar|guardado))';
+const MOVER_ESOS = new RegExp(`${PREFIJO_MOVER}${VERBO_MOVER} (?:(?:esos|estos|esas|estas|los mismos|las mismas) ${NUMERO_ESOS}${TIPO_ESOS}${ANTES_ESOS}?|(?:los|las) ${NUMERO_ESOS}${TIPO_ESOS}${ANTES_ESOS})${DESTINO_ESOS}`, 'd');
+const MOVER_ESOS_CLITICO = new RegExp(`${PREFIJO_MOVER}(?:muevelos|muevelas|pasalos|pasalas|metelos|metelas|llevalos|llevalas|ponlos|ponlas|colocalos|colocalas)(?: tambien)?${DESTINO_ESOS}`, 'd');
+function interpretarMoverEsos(mensaje, conocidas = []) {
+  if (typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(INVISIBLES, '').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
+  if (t === '' || t.length > 160) return null;
+  const base = sinAcentos(t);
+  if (base.length !== t.length) return null;
+  const explicito = MOVER_ESOS.exec(base);
+  const m = explicito ?? MOVER_ESOS_CLITICO.exec(base);
+  if (!m) return null;
+  const destinoBase = base.slice(m.indices[1][0], m.indices[1][1]);
+  // «ponlos en la lista de la compra» no es una carpeta
+  if (/^(?:mi |tu )?(?:lista|listas|agenda|calendario|compra|tareas|notas de)\b/.test(destinoBase)) return null;
+  const limpio = t.slice(m.indices[1][0], m.indices[1][1]).replace(/\s+(?:barra|slash)\s+/gi, '/').split('/').map((x) => x.replace(/^[«"“'`\s]+|[»"”'`\s]+$/g, ''));
+  if (limpio.some((x) => x === '' || x.split(' ').length > 4)) return null;
+  const segs = segmentosCarpeta(limpio.join('/'));
+  if (!segs) return null;
+  const destino = segs.join('/');
+  if (!explicito && !(destino.includes('/') || / carpeta (?:de |del )?$/.test(base.slice(0, m.indices[1][0])) || carpetaConocida(destino, conocidas))) return null;
+  return { destino };
+}
+
+// --- «Ponlo en Budapest» sin citar nada, justo después de mandar fotos(preguntaba «¿a cuál te refieres?») ---
+// Vale para el último lote de archivos que llegaron seguidos y siguen sin sitio (lote: sus referencias, lo calcula «Construir petición»).
+// Solo con un verbo de guardar y un sitio; si el sitio suena a una lista o a la agenda («ponlo en la lista de la compra») no es una carpeta.
+const VERBO_ULTIMO_LOTE = '(?:ponlo|ponla|ponlos|ponlas|pon|ponmelo|ponmela|ponmelos|ponmelas|guardalo|guardala|guardalos|guardalas|guarda|guardamelo|guardamela|guardamelos|guardamelas|metelo|metela|metelos|metelas|mete|metemelo|metemela|metemelos|metemelas|muevelo|muevela|muevelos|muevelas|archivalo|archivala|archivalos|archivalas|archiva|llevalo|llevala|llevalos|llevalas|dejalo|dejala|dejalos|dejalas)';
+const OBJETO_LOTE = '(?: (?:todo|todas|todos|las dos|los dos|ambas|ambos|esto|eso|esta|esa|estas|esas|estos|esos|las fotos|la foto|los archivos|el archivo|los documentos|el documento|las imagenes|la imagen)(?: tambien)?)?';
+const ARCHIVAR_LOTE = new RegExp(`${PREFIJO_MOVER}${VERBO_ULTIMO_LOTE}${OBJETO_LOTE} (?:en|dentro de|a) (?:las |los |la |el )?(?:carpeta )?(.+)$`, 'd');
+const NO_ES_CARPETA = /\b(?:lista|compra|tareas?|alarmas?|citas?|calendario|agenda|recordatorios?|memoria|proyecto|pendientes?|manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b|\d{1,2}(?::\d{2})? ?h\b|\b(?:las|la) \d/;
+function archivarUltimoLote(mensaje, lote) {
+  if (!Array.isArray(lote) || lote.length === 0 || typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(/\s+/g, ' ').replace(/[\s.!?,;:]+$/, '').trim();
+  if (t === '' || t.length > 120) return null;
+  const base = sinAcentos(t);
+  if (base.length !== t.length) return null;
+  const m = ARCHIVAR_LOTE.exec(base);
+  if (!m) return null;
+  const resto = t.slice(m.indices[1][0], m.indices[1][1]);
+  if (NO_ES_CARPETA.test(sinAcentos(resto))) return null;
+  const limpio = resto.replace(/\s+(?:barra|slash)\s+/gi, '/').split('/').map((x) => x.replace(/^[«"“'`\s]+|[»"”'`\s]+$/g, ''));
+  if (limpio.some((x) => x === '' || x.split(' ').length > 4)) return null;
+  const segs = segmentosCarpeta(limpio.join('/'));
+  return segs ? { ruta: segs.join('/'), refs: [...new Set(lote)] } : null;
+}
+
+// --- Propuestas concretas de la secretaria : «¿Paso los archivos de «Budapest» a «Viajes/Budapest»?» ---
+// La propuesta queda abierta como pregunta (motivo sugerencia, origen codigo) con la orden exacta. Un «sí» (o «vale», «júntalas», «muévelos»…) o
+// repetir el principio de la orden («Mueve los archivos») la ejecuta como si el usuario la hubiera escrito entera; un
+// «no» la deja como está. Devuelve null (no contesta a la propuesta), { tipo: 'no' } o { tipo: 'si', orden }.
+const PALABRAS_ACEPTA = new Set(['si', 'vale', 'ok', 'okey', 'venga', 'dale', 'claro', 'adelante', 'hazlo', 'perfecto', 'exacto', 'eso', 'es', 'de', 'acuerdo', 'por', 'favor', 'porfa', 'juntalas', 'juntalos', 'juntala', 'juntalo', 'muevelos', 'muevelas', 'muevelo', 'muevela', 'pasalos', 'pasalas', 'pasalo', 'pasala', 'ya', 'bien', 'genial']);
+const RECHAZA_SUGERENCIA = /^(?:no|nop|mejor no|no gracias|dejalo|dejalo asi|da igual|nada|olvidalo|no hace falta)$/;
+function aceptaSugerencia(mensaje, hilo) {
+  const t = motivoDelHilo(hilo);
+  if (t?.motivo !== 'sugerencia' || t.origen !== 'codigo' || typeof t.orden !== 'string' || t.orden === '' || t.orden.length > 200) return null;
+  const m = sinSignos(mensaje ?? '');
+  if (!m) return null;
+  if (RECHAZA_SUGERENCIA.test(m)) return { tipo: 'no' };
+  const palabras = m.split(' ').filter(Boolean);
+  if (palabras.length <= 5 && palabras.every((w) => PALABRAS_ACEPTA.has(w))) return { tipo: 'si', orden: t.orden };
+  const orden = sinSignos(t.orden);
+  if (palabras.length >= 2 && (orden === m || orden.startsWith(`${m} `))) return { tipo: 'si', orden: t.orden };
+  return null;
+}
+const turnoSugerencia = (orden, texto) => JSON.stringify({ intencion: 'aclarar', motivo: 'sugerencia', origen: 'codigo', orden, pregunta: texto, items: [], respuesta_usuario: texto });
+
+// --- «¿Dónde la guardo?» ante una carpeta parecida : la respuesta se resuelve por código ---
+// La pregunta la escribe «Planificar» (motivo carpeta_parecida, origen codigo) con las opciones, la ruta pedida y los ids de los archivos.
+// Vale: el número («1», «la 2»), «la primera», «sí» (si solo había una opción), «crea»/«nueva» (crea la pedida), el nombre de una opción, o
+// «no»/«déjalo» (se quedan en Entrada). Devuelve null (no contesta a esa pregunta), { tipo: 'no' }, { tipo: 'repetir' } (contesta pero no se
+// entiende cuál: se vuelve a preguntar) o { tipo: 'elegida', ruta, archivos, nombre, nueva }.
+const ORDINALES_CARPETA = { primera: 1, primero: 1, uno: 1, una: 1, segunda: 2, segundo: 2, dos: 2, tercera: 3, tercero: 3, tres: 3, cuarta: 4, cuarto: 4, cuatro: 4, quinta: 5, quinto: 5, cinco: 5 };
+const CREA_NUEVA = /^(?:crea(?:la|lo|r)?|creala nueva|crea(?:la)? (?:una )?nueva|una nueva|nueva|otra|otra nueva|en una nueva|en otra|haz(?:la)? (?:una )?nueva)\b/;
+const NO_CARPETA = /^(?:no|nop|mejor no|dejalo|dejala|dejalos|dejalas|nada|ninguna|cancela|olvidalo|da igual|en entrada)\b/;
+const SI_CARPETA = /^(?:si|vale|ok|okey|claro|ahi|esa|en esa|alli|perfecto|venga|dale|si ahi|si en esa|si esa)$/;
+function carpetaDelHilo(t) {
+  if (t?.motivo !== 'carpeta_parecida' || t.origen !== 'codigo' || !Array.isArray(t.opciones) || typeof t.nueva !== 'string' || !Array.isArray(t.archivos)) return null;
+  const opciones = t.opciones.filter((r) => typeof r === 'string' && segmentosCarpeta(r)).slice(0, 5);
+  const archivos = t.archivos.filter((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 20);
+  if (opciones.length === 0 || archivos.length === 0 || !segmentosCarpeta(t.nueva)) return null;
+  return { opciones, archivos, nueva: t.nueva, nombre: typeof t.nombre === 'string' ? t.nombre : null };
+}
+function respuestaCarpeta(mensaje, hilo) {
+  const c = carpetaDelHilo(motivoDelHilo(hilo));
+  if (!c) return null;
+  const m = sinSignos(mensaje ?? '').replace(/^(?:pues|mejor|en|la|el|opcion|numero|carpeta)\s+/g, '').replace(/^(?:la|el|opcion|numero)\s+/, '').trim();
+  if (!m || m.split(' ').length > 6) return null;
+  const elegir = (ruta, nueva = false) => ({ tipo: 'elegida', ruta, archivos: c.archivos, nombre: c.nombre, nueva });
+  const n = /^\d$/.test(m) ? Number(m) : ORDINALES_CARPETA[m] ?? null;
+  if (n !== null) {
+    if (n >= 1 && n <= c.opciones.length) return elegir(c.opciones[n - 1]);
+    if (n === c.opciones.length + 1) return elegir(c.nueva, true);
+    return { tipo: 'repetir' };
+  }
+  if (NO_CARPETA.test(m)) return { tipo: 'no' };
+  if (CREA_NUEVA.test(m)) return elegir(c.nueva, true);
+  if (SI_CARPETA.test(m)) return c.opciones.length === 1 ? elegir(c.opciones[0]) : { tipo: 'repetir' };
+  // El nombre de una opción: por su ruta entera o, si no hay dudas, por su último tramo
+  const original = String(mensaje ?? '').trim();
+  const porRuta = c.opciones.filter((r) => clavesIguales(r, original));
+  if (porRuta.length === 1) return elegir(porRuta[0]);
+  const porTramo = c.opciones.filter((r) => clavesIguales(ultimoTramo(r), original));
+  if (porTramo.length === 1 && !clavesIguales(c.nueva, original)) return elegir(porTramo[0]);
+  if (porTramo.length > 0 || clavesIguales(c.nueva, original)) return { tipo: 'repetir' };
+  return null;
+}
+// Antes de guardar en una carpeta que NO existe, se mira si hay otra que se le parece (por su último tramo, en cualquier nivel): «Budapest»
+// cuando ya hay «Viajes/Budapest», «viaje Tren de Hierro» cuando hay «Viajes/Tren de Hierro», «Viaje» cuando hay «Viajes». Si la hay, se
+// pregunta; si no, se crea. Una ruta que ya existe con otra escritura («viajes/budapest») se escribe como ya está. Entrada no cuenta.
+// Devuelve { ruta } (la que se usa) o { ruta, parecidas } (hay que preguntar). Sin carpetas conocidas (sin actualizar la base de datos a la 1.5), { ruta } tal cual.
+const MAX_OPCIONES_CARPETA = 4;
+// Primero las de nombre igual, después las que solo cambian en una errata y al final las que contienen sus palabras
+const rangoParecido = (a, b) => (clavesIguales(a, b) ? 0 : palabrasCarpeta(a).length === palabrasCarpeta(b).length ? 1 : 2);
+function revisarCarpetaPedida(ruta, conocidas) {
+  // Una sola por ruta sin mayúsculas ni tildes («Viajes/Budapest» y «viajes/Budapest» de archivos antiguos): la primera, que es la de Drive
+  // (Construir petición las ordena así; sección 77)
+  const vistas = new Set();
+  const lista = (Array.isArray(conocidas) ? conocidas : []).map((c) => (typeof c === 'string' ? c : c?.ruta)).filter((r) => typeof r === 'string' && segmentosCarpeta(r) && !vistas.has(sinAcentos(r)) && vistas.add(sinAcentos(r)));
+  if (lista.length === 0 || typeof ruta !== 'string') return { ruta };
+  const igual = lista.find((r) => sinAcentos(r) === sinAcentos(ruta));
+  if (igual) return { ruta: igual };
+  // Los tramos de delante que ya existen se escriben como están («viajes/Nueva» → «Viajes/Nueva»)
+  const segs = ruta.split('/');
+  let canon = ruta;
+  for (let k = segs.length - 1; k >= 1; k--) {
+    const pref = lista.find((r) => sinAcentos(r) === sinAcentos(segs.slice(0, k).join('/')));
+    if (pref) {
+      canon = [pref, ...segs.slice(k)].join('/');
+      break;
+    }
+  }
+  const nombre = segs.at(-1);
+  const parecidas = lista
+    .filter((r) => sinAcentos(r.split('/')[0]) !== 'entrada' && !sinAcentos(canon).startsWith(`${sinAcentos(r)}/`) && nombresParecidos(ultimoTramo(r), nombre))
+    .sort((a, b) => rangoParecido(ultimoTramo(a), nombre) - rangoParecido(ultimoTramo(b), nombre) || a.split('/').length - b.split('/').length || a.localeCompare(b, 'es'))
+    .slice(0, MAX_OPCIONES_CARPETA);
+  return parecidas.length > 0 ? { ruta: canon, parecidas } : { ruta: canon };
+}
+// Mover las fotos o los archivos de una carpeta a otra . conocidas: las de carpetas_conocidas(), con cuántos archivos tiene cada una.
+// Devuelve { texto } (no se mueve nada y se dice por qué) o { origen, destino, cambios: [{ de, a }] } (una ruta exacta de la base de datos por
+// cambio: la carpeta y las de dentro).
+function planMoverArchivos(pedido, conocidas) {
+  const filas = (Array.isArray(conocidas) ? conocidas : []).filter((c) => c && typeof c.ruta === 'string' && segmentosCarpeta(c.ruta));
+  const conArchivos = filas.filter((c) => Number(c.archivos) > 0).map((c) => c.ruta);
+  const que = pedido.solo_fotos ? 'fotos' : 'archivos';
+  // El origen: la ruta tal cual o, si no hay dudas, por su último tramo
+  let origen = conArchivos.find((r) => sinAcentos(r) === sinAcentos(pedido.origen)) ?? null;
+  if (!origen) {
+    const vistos = new Set();
+    const porTramo = conArchivos.filter((r) => (clavesIguales(ultimoTramo(r), pedido.origen) || clavesIguales(r, pedido.origen)) && !vistos.has(sinAcentos(r)) && vistos.add(sinAcentos(r)));
+    if (porTramo.length > 1) return { texto: `Hay varias carpetas «${limpiarTxt(pedido.origen)}» con ${que}:\n${porTramo.map((r) => `• ${limpiarTxt(r)}`).join('\n')}\nDime la ruta completa.` };
+    origen = porTramo[0] ?? null;
+  }
+  if (!origen) return { texto: `No tengo ${que} guardad${pedido.solo_fotos ? 'as' : 'os'} en «${limpiarTxt(pedido.origen)}».` };
+  // Se escribe como en Drive («Viajes/Budapest», no «viajes/Budapest» de archivos antiguos; sección 78). Los cambios ya cogen todas las variantes.
+  origen = filas.find((c) => sinAcentos(c.ruta) === sinAcentos(origen))?.ruta ?? origen;
+  if (!pedido.destino) return { texto: `¿Adónde? Dime, por ejemplo: «mueve ${pedido.solo_fotos ? 'las' : 'los'} ${que} de ${limpiarTxt(origen)} a Viajes/${limpiarTxt(ultimoTramo(origen))}».` };
+  // El destino: si existe, como está escrito; si es el último tramo de UNA sola carpeta («Budapest» y solo existe «Viajes/Budapest»), esa
+  // (sección 77: no tiene sentido preguntar); si no existe pero se parece a otra, se dice (no se crea a ciegas una casi repetida)
+  let destinoPedido = pedido.destino;
+  if (!filas.some((c) => sinAcentos(c.ruta) === sinAcentos(destinoPedido)) && !destinoPedido.includes('/')) {
+    const vistos = new Set();
+    const porTramo = filas.map((c) => c.ruta).filter((r) => clavesIguales(ultimoTramo(r), destinoPedido) && !vistos.has(sinAcentos(r)) && vistos.add(sinAcentos(r)));
+    if (porTramo.length === 1) destinoPedido = porTramo[0];
+  }
+  const rev = revisarCarpetaPedida(destinoPedido, filas);
+  const destinoExiste = filas.some((c) => sinAcentos(c.ruta) === sinAcentos(rev.ruta));
+  if (!destinoExiste && rev.parecidas) {
+    // Con una sola parecida, la propuesta queda abierta: «sí» la hace 
+    if (rev.parecidas.length === 1) {
+      return { texto: `No tengo «${limpiarTxt(rev.ruta)}». ¿Paso ${pedido.solo_fotos ? 'las' : 'los'} ${que} de «${limpiarTxt(origen)}» a «${limpiarTxt(rev.parecidas[0])}»?`, sugerencia: `mueve los ${pedido.solo_fotos ? 'fotos' : 'archivos'} de ${origen} a ${rev.parecidas[0]}`.replace('los fotos', 'las fotos') };
+    }
+    return { texto: `No tengo «${limpiarTxt(rev.ruta)}». ¿Es ${rev.parecidas.map((r) => `«${limpiarTxt(r)}»`).join(' o ')}? Dímelo con la ruta: «mueve ${pedido.solo_fotos ? 'las' : 'los'} ${que} de ${limpiarTxt(origen)} a ${limpiarTxt(rev.parecidas[0])}».` };
+  }
+  const destino = rev.ruta;
+  if (sinAcentos(destino.split('/')[0]) === 'entrada') return { texto: 'Entrada es para lo que aún no tiene sitio: elige otra carpeta.' };
+  if (sinAcentos(destino) === sinAcentos(origen)) return { texto: `Ya están en «${limpiarTxt(origen)}».` };
+  // Si el destino está dentro del origen, solo se mueve lo que está justo en el origen (lo de las subcarpetas acabaría dentro de sí mismo)
+  const dentroDelOrigen = sinAcentos(destino).startsWith(`${sinAcentos(origen)}/`);
+  const cambios = conArchivos
+    .filter((r) => sinAcentos(r) === sinAcentos(origen) || (!dentroDelOrigen && sinAcentos(r).startsWith(`${sinAcentos(origen)}/`)))
+    .map((r) => ({ de: r, a: `${destino}${r.slice(origen.length)}` }))
+    .filter((c) => segmentosCarpeta(c.a));
+  if (cambios.length === 0) return { texto: `No puedo moverlos ahí: quedarían a más de ${NIVELES_CARPETA_MAX} niveles.` };
+  return { origen, destino, cambios };
+}
+// ¿Mover UNA carpeta donde ya hay otra igual o parecida?  Devuelve { origen, destino } con las rutas como están escritas (la carpeta
+// que se mueve, con archivos guardados, y la que ya existe dentro del destino) o null. Varias carpetas, crear el destino o sin archivos
+// guardados: null (lo decide «Revisar Drive», que explica cómo juntarlas).
+function fusionDeCarpetas(pedido, conocidas) {
+  if (!pedido || pedido.crear === true || !Array.isArray(pedido.origenes) || pedido.origenes.length !== 1) return null;
+  const filas = (Array.isArray(conocidas) ? conocidas : []).filter((c) => c && typeof c.ruta === 'string' && segmentosCarpeta(c.ruta));
+  const rutas = [...new Set(filas.map((c) => c.ruta))];
+  const destino = rutas.find((r) => sinAcentos(r) === sinAcentos(pedido.destino)) ?? (() => {
+    const porClave = rutas.filter((r) => clavesIguales(r, pedido.destino));
+    return porClave.length === 1 ? porClave[0] : undefined;
+  })();
+  if (!destino) return null;
+  const pedidoOrigen = pedido.origenes[0];
+  let origen = rutas.find((r) => sinAcentos(r) === sinAcentos(pedidoOrigen)) ?? null;
+  if (!origen) {
+    const porTramo = rutas.filter((r) => clavesIguales(ultimoTramo(r), pedidoOrigen));
+    if (porTramo.length !== 1) return null;
+    origen = porTramo[0];
+  }
+  const padreDe = (r) => r.split('/').slice(0, -1).join('/');
+  if (sinAcentos(padreDe(origen)) === sinAcentos(destino)) return null; // ya está ahí: lo dice «Revisar Drive»
+  const gemela = rutas.find((r) => sinAcentos(padreDe(r)) === sinAcentos(destino) && sinAcentos(r) !== sinAcentos(origen) && nombresParecidos(ultimoTramo(r), ultimoTramo(origen)));
+  if (!gemela) return null;
+  const conArchivos = filas.some((c) => Number(c.archivos) > 0 && (sinAcentos(c.ruta) === sinAcentos(origen) || sinAcentos(c.ruta).startsWith(`${sinAcentos(origen)}/`)));
+  return conArchivos ? { origen, destino: gemela } : null;
+}
+function textoCarpetaParecida(nueva, parecidas, n) {
+  const opciones = [...parecidas.map((r, i) => `${i + 1}. ${limpiarTxt(r)}`), `${parecidas.length + 1}. Crear «${limpiarTxt(nueva)}»`];
+  return `No tengo «${limpiarTxt(nueva)}», pero sí:\n${opciones.join('\n')}\n¿Dónde ${n === 1 ? 'la' : 'las'} guardo?`;
 }
 
 // --- Órdenes de LECTURA con tus palabras : ver, listar, enseñar ---
@@ -1682,6 +2117,8 @@ function tipoDePregunta(fila) {
   if (MOTIVOS_SI_NO.includes(motivo)) return 'sino';
   if (motivo === 'repetido') return 'eleccion';
   if (motivo === 'oferta') return 'oferta';
+  if (motivo === 'carpeta_parecida') return 'carpeta';
+  if (motivo === 'sugerencia') return 'sugerencia';
   if (motivo === 'convertir_hora' || motivo === 'solape') return 'cuando';
   const texto = sinAcentos(fila.pregunta);
   if (/alarma/.test(texto) && /cita/.test(texto) && /tarea/.test(texto)) return 'tipo';
@@ -1693,7 +2130,7 @@ function tipoDePregunta(fila) {
 // Una orden nueva («borra…», «dame…», «apunta…»), salvo un sí/no (se usa también para saber si citar una pregunta es contestarla)
 const esOrdenNueva = (mensaje) => { const m = sinSignos(mensaje ?? ''); return ORDEN_NUEVA.test(m) && !SI_NO.test(m); };
 const RESPONDE_SINO = { test: (m) => SI_NO.test(m) || (CUANDO.test(m) && m.split(' ').filter(Boolean).length <= 4) };
-// Una oferta de la charla («¿quieres que te lo apunte como tarea?», sección 59) la contesta un sí, un no o «apúntalo» (aunque «apúntalo»
+// Una oferta de la charla («¿quieres que te lo apunte como tarea?») la contesta un sí, un no o «apúntalo» (aunque «apúntalo»
 // empiece como una orden nueva); cualquier otra cosa es otro tema.
 // Lista CERRADA de palabras y de hasta 4 en total: «claro, y qué tengo mañana» o «anota que mañana tengo dentista» NO son respuestas a la oferta.
 const PALABRAS_OFERTA = new Set(['si', 'sii', 'vale', 'ok', 'okey', 'claro', 'dale', 'venga', 'perfecto', 'hazlo', 'adelante', 'de', 'acuerdo', 'por', 'favor', 'no', 'nop', 'mejor', 'ya', 'esta', 'gracias', 'pues', 'bueno', 'todo', 'tambien', 'apuntalo', 'apuntala', 'apuntamelo', 'apuntamela', 'anotalo', 'anotala', 'anotamelo', 'anotamela', 'guardalo', 'guardala', 'ponlo', 'ponla', 'ponmelo', 'ponmela']);
@@ -1704,7 +2141,11 @@ const OFERTA_ACEPTA = {
     return p.length > 0 && p.length <= 4 && p.every((w) => PALABRAS_OFERTA.has(w)) && (!p.includes('gracias') || p.includes('no'));
   },
 };
-const RESPONDE = { sino: RESPONDE_SINO, cuando: CUANDO, tipo: ELIGE_TIPO, eleccion: ELIGE_REPETIDO, oferta: OFERTA_ACEPTA };
+// «¿Dónde la guardo?» : un número, «la primera», «sí», «créala», «no» o un nombre corto
+const ELIGE_CARPETA = { test: (m) => /^(?:\d|la \d|el \d|opcion \d|numero \d|primera|segunda|tercera|cuarta|quinta|si|vale|ahi|esa|en esa|crea|creala|crear|nueva|una nueva|otra|no|dejalo|nada|cancela)\b/.test(m) || m.split(' ').filter(Boolean).length <= 3 };
+// Una propuesta concreta : un sí o un no cortos, o repetir el principio de la orden («mueve los archivos»)
+const RESPONDE_SUGERENCIA = { test: (m) => { const p = m.split(' ').filter(Boolean); return RECHAZA_SUGERENCIA.test(m) || (p.length <= 5 && p.every((w) => PALABRAS_ACEPTA.has(w))) || /^(?:mueve|mover|pasa|pasar|junta|juntar|mete|meter)\b/.test(m); } };
+const RESPONDE = { sino: RESPONDE_SINO, cuando: CUANDO, tipo: ELIGE_TIPO, eleccion: ELIGE_REPETIDO, oferta: OFERTA_ACEPTA, carpeta: ELIGE_CARPETA, sugerencia: RESPONDE_SUGERENCIA };
 // Si el mensaje no encaja con ninguna, solo se toma como respuesta a la más reciente si esta admite cualquier cosa (una pregunta libre, una
 // hora o una elección). A una confirmación o a «¿alarma, cita o tarea?» no la contesta algo que no encaja: es otra cosa.
 const ACEPTA_CUALQUIERA = new Set(['libre', 'cuando', 'eleccion']);
@@ -1717,7 +2158,7 @@ function elegirPregunta(mensaje, abiertas) {
   if (filas.length === 0) return null;
   const m = sinSignos(mensaje ?? '');
   const esOrden = ORDEN_NUEVA.test(m) && !SI_NO.test(m);
-  if (esOrden) return filas.find((f) => tipoDePregunta(f) === 'libre') ?? filas.find((f) => tipoDePregunta(f) === 'oferta' && OFERTA_ACEPTA.test(m)) ?? null;
+  if (esOrden) return filas.find((f) => tipoDePregunta(f) === 'libre') ?? filas.find((f) => tipoDePregunta(f) === 'oferta' && OFERTA_ACEPTA.test(m)) ?? filas.find((f) => tipoDePregunta(f) === 'carpeta' && CREA_NUEVA.test(m)) ?? null;
   return filas.find((f) => RESPONDE[tipoDePregunta(f)]?.test(m)) ?? (ACEPTA_CUALQUIERA.has(tipoDePregunta(filas[0])) ? filas[0] : null);
 }
 
@@ -1848,6 +2289,15 @@ function interpretarDeshacer(mensaje) {
   const palabras = c[2].split(' ').filter((w) => w.length > 2 && !VACIAS_QUITAR.has(w));
   if (!c[1] && palabras.length === 0) return null;
   return { clase: c[1] ? TIPO_A_QUITAR[c[1]] : null, tipoPalabra: c[1] ?? null, palabras };
+}
+// «Déjalo como estaba» / «deshaz» justo después de MOVER archivos: vuelven a la carpeta en la que estaban.
+// Solo vale si lo último que hizo la secretaria fue mover archivos (lo decide «Construir petición» con la anotación del mensaje anterior).
+const COMO_ESTABA = /\b(?:dejalo|dejalos|dejalas|dejala|ponlo|ponlos|ponlas|ponla|vuelve a ponerlo|vuelve a ponerlos|vuelve a ponerlas|vuelve a dejarlo|vuelve a dejarlos|vuelve a dejarlas|devuelvelo|devuelvelos|devuelvelas|devuelvela|vuelvelo a poner|vuelvelos a poner|vuelvelas a poner)(?: todo)? (?:como (?:estaba|estaban|antes)|donde (?:estaba|estaban)|en su sitio|a su sitio)\b/;
+const DEVUELVE_SOLO = /^(?:(?:perdon|vaya|uy|ups|no|me he equivocado|me equivoque)[ ,]+)*(?:devuelvelos|devuelvelas|devuelvelo|devuelvela|deshazlo|deshaz|deshacer|deshaz eso|deshaz lo ultimo)(?: por favor)?$/;
+function interpretarDeshacerMovimiento(mensaje) {
+  const t = sinSignos(mensaje ?? '');
+  if (!t || t.split(' ').length > 25) return false;
+  return COMO_ESTABA.test(t) || DEVUELVE_SOLO.test(t) || interpretarDeshacer(mensaje)?.todo === true;
 }
 const claseDeQuitado = (r) => (r.tipo === 'evento' ? 'cita' : r.tipo === 'tarea' ? (r.recordar_en && !r.fecha_limite ? 'alarma' : 'tarea') : r.tipo === 'nota' ? 'nota' : r.tipo);
 // Devuelve { items } (lo que se recupera) o { texto } (nada que recuperar)
@@ -2022,7 +2472,7 @@ function parecido(nombre, existente) {
 }
 
 // Hasta 3 nombres existentes, de más a menos parecidos (vacío si ninguno se parece)
-function nombresParecidos(nombre, existentes) {
+function proyectosParecidos(nombre, existentes) {
   return [...new Set(existentes.map((a) => limpiarTxt(a)).filter(Boolean))]
     .map((a) => ({ a, p: parecido(nombre, a) }))
     .filter((x) => x.p >= 40)
@@ -2045,7 +2495,7 @@ function comprobarProyectos({ datos, config, hiloPrevio }) {
     const k = sinAcentos(p);
     if (conocidos.has(k) || confirmados.has(k) || vistos.has(k)) continue;
     vistos.add(k);
-    const parecidos = nombresParecidos(p, config.proyectos ?? []).filter((x) => parecido(p, x) >= 60);
+    const parecidos = proyectosParecidos(p, config.proyectos ?? []).filter((x) => parecido(p, x) >= 60);
     if (parecidos.length > 0) {
       const texto = `¿Es el proyecto ${parecidos.map((x) => `«${x}»`).join(' o ')}, o creo uno nuevo, «${limpiarTxt(p)}»?`;
       return { motivo: 'crear_proyecto', proyectos: [p], texto };
@@ -2310,13 +2760,48 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   // Las respuestas a las preguntas de borrar van antes que los comandos y atajos («Tareas» es la sección, no el listado)
   const elegida = seccionElegida(contexto.mensaje, contexto.hiloPrevio);
   const confirmacion = elegida ? null : respuestaConfirmacion(contexto.mensaje, contexto.hiloPrevio);
+  // La respuesta a «¿Dónde la guardo?» (carpeta parecida): también antes que los comandos («2» es la opción)
+  const carpetaResp = elegida || confirmacion ? null : respuestaCarpeta(contexto.mensaje, contexto.hiloPrevio);
   const esUndo = /^\s*\/undo\b/i.test(contexto.mensaje ?? '');
-  const comando = elegida || confirmacion || esUndo ? null : interpretarComando(contexto.mensaje, { ahora, nombre: contexto.nombreSecretaria });
+  const comando = elegida || confirmacion || esUndo || carpetaResp ? null : interpretarComando(contexto.mensaje, { ahora, nombre: contexto.nombreSecretaria });
   const ayudaFija = (mensajes, intencion = 'ayuda') => ({
     peticiones: [marcarMensaje({ procesado: true, error: null })],
     meta: { ok: true, error: null, intencion, avisos: [], respuesta_usuario: mensajes.join('\n\n'), mensajes_fijos: mensajes, pregunta: null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString() },
   });
   if (comando?.tipo === 'texto') return ayudaFija(comando.mensajes);
+  const sugerida = comando ? null : aceptaSugerencia(contexto.mensaje, contexto.hiloPrevio);
+  if (sugerida?.tipo === 'no') {
+    return {
+      peticiones: [...(contexto.pendienteId ? [peticion('cerrar pregunta anterior', 'PATCH', `/mensajes?id=eq.${encodeURIComponent(contexto.pendienteId)}`, { pregunta_pendiente: false }, 'return=minimal')] : []), marcarMensaje({ procesado: true, error: null })],
+      meta: { ok: true, error: null, intencion: 'descartar', avisos: [], respuesta_usuario: 'Vale, lo dejo así.', respuesta_fija: true, pregunta: null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString() },
+    };
+  }
+  if (carpetaResp?.tipo === 'no') {
+    return {
+      peticiones: [...(contexto.pendienteId ? [peticion('cerrar pregunta anterior', 'PATCH', `/mensajes?id=eq.${encodeURIComponent(contexto.pendienteId)}`, { pregunta_pendiente: false }, 'return=minimal')] : []), marcarMensaje({ procesado: true, error: null })],
+      meta: { ok: true, error: null, intencion: 'descartar', avisos: [], respuesta_usuario: 'Vale, se quedan en Entrada.', respuesta_fija: true, pregunta: null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString() },
+    };
+  }
+  // No se entiende cuál: la pregunta sigue abierta
+  if (carpetaResp?.tipo === 'repetir') return ayudaFija(['Dime el número de la opción.']);
+  // «Déjalo como estaba» / «deshaz» justo después de mover archivos : vuelven a donde estaban y, si la carpeta de la que salieron
+  // estaba apuntada para vaciarla (base de datos 1.5), se anula (si ya fue a la papelera, «Sincronizar Drive» crea otra igual)
+  const mov = contexto.movidosRecientes;
+  const vuelta = comando || elegida || confirmacion || contexto.pedirNombre === true || contexto.esperaNombre === true
+    ? null
+    : mov?.ultimo === true && Array.isArray(mov.deshacer) && mov.deshacer.length > 0 && interpretarDeshacerMovimiento(contexto.mensaje) ? mov : null;
+  if (vuelta) {
+    const grupos = new Map();
+    for (const d of vuelta.deshacer) grupos.set(d.de, [...(grupos.get(d.de) ?? []), d.id]);
+    return {
+      peticiones: [
+        marcarMensaje({ procesado: true, error: null }),
+        ...[...grupos].map(([de, ids]) => peticion(`devolver archivos a ${de}`, 'PATCH', `/archivos?id=in.(${ids.map(encodeURIComponent).join(',')})&eliminado_at=is.null`, { carpeta_destino: de, estado: 'asignado' }, 'return=representation')),
+        ...(vuelta.vaciar ?? []).map((r) => peticion(`pedir vaciar anulada ${r}`, 'PATCH', `/carpetas_vaciar?hecha_at=is.null&ruta=ilike.${encodeURIComponent(r.replace(/[*%]/g, ''))}`, { hecha_at: ahora.toISOString(), resultado: 'no_vacia' }, 'return=minimal')),
+      ],
+      meta: { ok: true, error: null, intencion: 'mover_archivos', avisos: [], respuesta_usuario: '', pregunta: null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString(), mover_archivos: { deshacer: true, destinos: [...grupos.keys()], previas: Object.fromEntries(vuelta.deshacer.map((d) => [d.id, d.a])) } },
+    };
+  }
   // «Deshaz» / «recupera la tarea del banco» : vuelve a pendiente lo que el usuario quitó por WhatsApp; las citas vuelven solas a Calendar
   const deshacer = comando || elegida || confirmacion || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarDeshacer(contexto.mensaje);
   if (deshacer) {
@@ -2428,9 +2913,36 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   // Archivo con pie que es solo una ruta («Fotos/Viajes»): se archiva sin el modelo
   const carpetaSuelta = comando || elegida || confirmacion || suelto || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarCarpetaSuelta(contexto.mensaje, contexto.archivosCitados);
   if (carpetaSuelta) resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: carpetaSuelta.refs, carpeta: carpetaSuelta.ruta, nombre: null } });
-  // «Mete la carpeta Viajes dentro de Fotos»: se reconoce por código, sin el modelo
-  const moverOrden = comando || elegida || confirmacion || suelto || carpetaSuelta || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarMoverCarpeta(contexto.mensaje);
+  // La carpeta elegida en «¿Dónde la guardo?»: se archiva ahí sin volver a preguntar (los archivos se buscan por su id: sus referencias cambian)
+  let carpetaConfirmada = null;
+  if (carpetaResp?.tipo === 'elegida') {
+    const refDeArchivo = new Map(Object.entries(archivos.refs ?? {}).map(([r, id]) => [id, r]));
+    const refsElegidos = carpetaResp.archivos.map((id) => refDeArchivo.get(id)).filter(Boolean);
+    if (refsElegidos.length === 0) {
+      return {
+        peticiones: [...(contexto.pendienteId ? [peticion('cerrar pregunta anterior', 'PATCH', `/mensajes?id=eq.${encodeURIComponent(contexto.pendienteId)}`, { pregunta_pendiente: false }, 'return=minimal')] : []), marcarMensaje({ procesado: true, error: null })],
+        meta: { ok: true, error: null, intencion: 'archivar', avisos: [], respuesta_usuario: 'Esos archivos ya no están en Entrada.', respuesta_fija: true, pregunta: null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString() },
+      };
+    }
+    resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: refsElegidos, carpeta: carpetaResp.ruta, nombre: carpetaResp.nombre } });
+    carpetaConfirmada = carpetaResp.ruta;
+  }
+  const sinAtajo = comando || elegida || confirmacion || suelto || carpetaSuelta || carpetaResp || contexto.pedirNombre === true || contexto.esperaNombre === true;
+  // «Ponlo en Budapest» sin citar nada, justo después de mandar fotos: el último lote 
+  const ultimoLote = sinAtajo || (contexto.archivosCitados ?? []).length > 0 ? null : archivarUltimoLote(contexto.mensaje, contexto.loteReciente);
+  if (ultimoLote) resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: ultimoLote.refs, carpeta: ultimoLote.ruta, nombre: null } });
+  // «Mueve las fotos de Budapest a Viajes/Budapest» : cambia su carpeta y «Sincronizar Drive» las mueve en unos segundos. Va antes que
+  // mover carpetas: dice «las fotos de» o «los archivos de», que es más concreto
+  const rutasConocidas = (contexto.carpetasConocidas ?? []).map((c) => c.ruta);
+  // «Mueve <nombre del archivo> a Notas» : un archivo concreto, ya guardado o no
+  const unArchivo = sinAtajo || ultimoLote ? null : interpretarMoverArchivoNombre(contexto.mensaje);
+  // «Mueve esos archivos a X» / «muévelos a X» : los últimos que movió o guardó la secretaria
+  const esos = sinAtajo || ultimoLote || unArchivo ? null : interpretarMoverEsos(contexto.mensaje, rutasConocidas);
+  const moverArch = sinAtajo || ultimoLote ? null : unArchivo ?? (esos ? { esos: true, destino: esos.destino } : null) ?? interpretarMoverArchivos(contexto.mensaje, rutasConocidas) ?? interpretarMoverContenido(contexto.mensaje, rutasConocidas);
+  // «Mete la carpeta Viajes dentro de Fotos» o «mueve Budapest a Viajes»: se reconoce por código, sin el modelo
+  const moverOrden = sinAtajo || ultimoLote || moverArch ? null : interpretarMoverCarpeta(contexto.mensaje, rutasConocidas);
   if (moverOrden) resp = respuestaDeAtajo({ intencion: 'mover_carpeta', mover_carpeta: moverOrden });
+  if (moverArch) resp = respuestaDeAtajo({ intencion: 'mover_archivos', mover_archivos: moverArch });
   if (!comando && pideBorrarTodo(contexto.mensaje)) resp = respuestaDeAtajo({ intencion: 'cancelar', cancelar: { filtro: {} } });
   const variasSecciones = comando || elegida || confirmacion || suelto ? null : borrarSecciones(contexto.mensaje);
   if (variasSecciones) resp = respuestaDeAtajo({ intencion: 'cancelar', cancelar: { filtros: variasSecciones } });
@@ -2525,6 +3037,18 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   }
 
   const { datos, avisos } = validado;
+  // El modelo no sabe que se pueden mover carpetas y archivos: si lo niega en una pregunta («No puedo mover carpetas en Drive. ¿Quieres que…?»,
+  // no se deja la pregunta abierta y se contesta cómo pedirlo
+  if (datos.intencion === 'aclarar' && typeof datos.pregunta === 'string' && (DICE_QUE_NO_MUEVE.test(datos.pregunta) || DICE_QUE_NO_MUEVE_ARCHIVOS.test(datos.pregunta))) {
+    avisos.push('el modelo dijo que no puede mover carpetas o archivos: se le corrige');
+    datos.respuestaUsuario = datos.pregunta;
+    datos.pregunta = null;
+    datos.intencion = 'charla';
+  }
+  // Carpetas pedidas que ya existen con otra escritura («viajes» cuando hay «Viajes»): se piden como están 
+  if (datos.intencion === 'crear_carpeta' && Array.isArray(datos.rutasNuevas)) {
+    datos.rutasNuevas = [...new Set(datos.rutasNuevas.map((r) => revisarCarpetaPedida(r, contexto.carpetasConocidas ?? []).ruta))];
+  }
   // Sin seguridad no se apunta nada (regla 5 del prompt, ahora también por código): si algo de lo que iba a guardar tiene una confianza baja,
   // se pregunta en vez de guardar, enseñando lo que se ha entendido. La respuesta vuelve al modelo con el hilo.
   const dudosos = datos.intencion === 'guardar' ? datos.items.filter((it) => typeof it.confianza === 'number' && it.confianza < UMBRAL_CONFIANZA) : [];
@@ -2636,10 +3160,80 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
 
   // Mover una carpeta dentro de otra : aquí no se mueve nada. «Revisar Drive» la busca en el árbol real y decide si se puede; si sí,
   // «Mover en Drive» la mueve y «Anotar movimiento» reescribe las rutas de la base de datos. Es una orden nueva: no cierra otra pregunta abierta.
+  // Juntar : una sola carpeta que se mete donde YA hay una igual o parecida («mueve Budapest a Viajes» y existe «Viajes/Budapest»).
+  // Lo que se quiere es juntarlas: se mueve lo que tiene guardado a la que ya existe (mover_archivos) en vez de rechazarlo.
+  const fusion = datos.intencion === 'mover_carpeta' ? fusionDeCarpetas(datos.moverCarpeta, contexto.carpetasConocidas ?? []) : null;
+  if (fusion) {
+    avisos.push(`«${fusion.origen}» se junta con «${fusion.destino}», que ya existe`);
+    datos.intencion = 'mover_archivos';
+    datos.moverArchivos = { origen: fusion.origen, destino: fusion.destino, solo_fotos: false };
+    meta.intencion = 'mover_archivos';
+  }
   if (datos.intencion === 'mover_carpeta') {
     return {
       peticiones: [marcarMensaje({ procesado: true, error: null })],
       meta: { ...meta, respuesta_usuario: '', carpetas: true, mover_carpeta: datos.moverCarpeta },
+    };
+  }
+  // Mover fotos o archivos ya guardados : cambia su carpeta y «Sincronizar Drive» los mueve en unos segundos
+  // Un archivo concreto por su nombre : se cambia su carpeta (y deja de estar pendiente si lo estaba); «Sincronizar Drive» lo mueve.
+  // Si la carpeta no existe pero se parece a otra, se pregunta como al archivar.
+  if (datos.intencion === 'mover_archivos' && (datos.moverArchivos.nombre || datos.moverArchivos.esos)) {
+    const ma = datos.moverArchivos;
+    const fija = (texto, extra = {}) => ({ peticiones: [marcarMensaje({ procesado: true, error: null, ...extra })], meta: { ...meta, respuesta_usuario: texto, respuesta_fija: true } });
+    // Cuáles: «esos» son los últimos que movió o guardó la secretaria 
+    const ids = ma.esos ? (contexto.movidosRecientes?.ids ?? []) : [];
+    if (ma.esos && ids.length === 0) return fija('No sé a qué archivos te refieres. Dime su nombre o la carpeta en la que están: «mueve las fotos de Budapest a Viajes».');
+    // El destino, como al archivar: si no existe pero se parece a una sola carpeta, se propone esa («sí» la hace)
+    const dest = revisarCarpetaPedida(ma.destino, contexto.carpetasConocidas ?? []);
+    const existe = (contexto.carpetasConocidas ?? []).some((c) => sinAcentos(c.ruta) === sinAcentos(dest.ruta));
+    const que = ma.esos ? 'esos archivos' : ma.todos ? `todos los archivos «${ma.nombre}»` : ma.nombre;
+    if (!existe && dest.parecidas?.length === 1) {
+      const texto = `No tengo «${limpiarTxt(dest.ruta)}». ¿${ma.esos || ma.todos ? 'Los' : 'Lo'} paso a «${limpiarTxt(dest.parecidas[0])}»?`;
+      return fija(texto, { pregunta: texto, pregunta_pendiente: true, hilo: [{ rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turnoSugerencia(`mueve ${que} a ${dest.parecidas[0]}`, texto) }] });
+    }
+    if (!existe && dest.parecidas?.length > 1) return fija(`No tengo «${limpiarTxt(dest.ruta)}». Se parecen: ${dest.parecidas.slice(0, 4).map((x) => `«${limpiarTxt(x)}»`).join(', ')}. Dime la carpeta exacta.`);
+    if (sinAcentos(dest.ruta.split('/')[0]) === 'entrada') return fija('Entrada es para lo que aún no tiene sitio: elige otra carpeta.');
+    const cambio = { carpeta_destino: dest.ruta, estado: 'asignado' };
+    // Dónde estaba cada archivo (para «déjalo como estaba»); los que no tenían carpeta (Entrada) no se pueden devolver así
+    const previasDe = (lista) => Object.fromEntries(lista.map((id) => [id, (contexto.archivosConocidos ?? []).find((a) => a.id === id)?.carpeta ?? null]).filter(([, c]) => typeof c === 'string' && c !== ''));
+    if (ma.esos) {
+      return {
+        peticiones: [marcarMensaje({ procesado: true, error: null }), peticion(`mover esos archivos a ${dest.ruta}`, 'PATCH', `/archivos?id=in.(${ids.map(encodeURIComponent).join(',')})&eliminado_at=is.null`, cambio, 'return=representation')],
+        meta: { ...meta, respuesta_usuario: '', mover_archivos: { esos: true, destino: dest.ruta, previas: previasDe(ids) } },
+      };
+    }
+    // Varios archivos con el mismo nombre (fotos del mismo minuto, antes de la sección 76): se pregunta antes de mover los dos
+    const iguales = (contexto.archivosConocidos ?? []).filter((a) => a.nombre === ma.nombre);
+    if (iguales.length > 1 && !ma.todos) {
+      const donde = [...new Set(iguales.map((a) => a.carpeta ?? (a.estado === 'pendiente' ? 'Entrada' : null)).filter(Boolean))];
+      const texto = `Hay ${iguales.length} archivos que se llaman «${limpiarTxt(ma.nombre)}»${donde.length ? ` (en ${donde.map((d) => `«${limpiarTxt(d)}»`).join(' y ')})` : ''}. ¿Muevo los ${iguales.length} a «${limpiarTxt(dest.ruta)}»?`;
+      return fija(texto, { pregunta: texto, pregunta_pendiente: true, hilo: [{ rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turnoSugerencia(`mueve todos los archivos «${ma.nombre}» a ${dest.ruta}`, texto) }] });
+    }
+    // Uno solo conocido: por su id (más preciso que el nombre); si no está entre los recientes, por el nombre exacto
+    const filtro = iguales.length === 1 && !ma.todos ? `id=eq.${encodeURIComponent(iguales[0].id)}` : `nombre=eq.${encodeURIComponent(ma.nombre)}`;
+    return {
+      peticiones: [marcarMensaje({ procesado: true, error: null }), peticion(`mover el archivo ${ma.nombre} a ${dest.ruta}`, 'PATCH', `/archivos?${filtro}&eliminado_at=is.null`, cambio, 'return=representation')],
+      meta: { ...meta, respuesta_usuario: '', mover_archivos: { nombre: ma.nombre, destino: dest.ruta, previas: previasDe(iguales.map((a) => a.id)) } },
+    };
+  }
+  if (datos.intencion === 'mover_archivos') {
+    const plan = planMoverArchivos(datos.moverArchivos, contexto.carpetasConocidas ?? []);
+    if (plan.texto) {
+      const abierta = plan.sugerencia ? { pregunta: plan.texto, pregunta_pendiente: true, hilo: [{ rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turnoSugerencia(plan.sugerencia, plan.texto) }] } : {};
+      return { peticiones: [marcarMensaje({ procesado: true, error: null, ...abierta })], meta: { ...meta, respuesta_usuario: plan.texto, respuesta_fija: true } };
+    }
+    const soloFotos = datos.moverArchivos.solo_fotos ? '&tipo_mime=like.image/*' : '';
+    // La carpeta de origen se apunta para vaciarla (base de datos 1.5): «Sincronizar Drive» la manda a la papelera cuando compruebe EN DRIVE
+    // que se ha quedado vacía (ni archivos ni carpetas). No si el destino está dentro de ella, ni Entrada ni Notas (lo decide la base de datos).
+    const dentroDelOrigen = sinAcentos(plan.destino).startsWith(`${sinAcentos(plan.origen)}/`);
+    return {
+      peticiones: [
+        marcarMensaje({ procesado: true, error: null }),
+        ...plan.cambios.map((c) => peticion(`mover archivos de ${c.de} a ${c.a}`, 'PATCH', `/archivos?carpeta_destino=eq.${encodeURIComponent(c.de)}&eliminado_at=is.null${soloFotos}`, { carpeta_destino: c.a }, 'return=representation')),
+        ...(dentroDelOrigen ? [] : [peticion(`pedir vaciar ${plan.origen}`, 'POST', '/rpc/pedir_vaciar_carpeta', { p_ruta: plan.origen }, 'return=representation')]),
+      ],
+      meta: { ...meta, respuesta_usuario: '', mover_archivos: { origen: plan.origen, destino: plan.destino, solo_fotos: datos.moverArchivos.solo_fotos, juntar: Boolean(fusion), vuelta: Object.fromEntries(plan.cambios.map((c) => [c.a, `${plan.origen}${c.de.slice(plan.origen.length)}`])), vaciar: dentroDelOrigen ? [] : [plan.origen] } },
     };
   }
 
@@ -2741,6 +3335,27 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       ],
       meta: { ...meta, intencion: 'aclarar', pregunta: bloqueo.texto, respuesta_usuario: bloqueo.texto, bloqueo: bloqueo.motivo },
     };
+  }
+
+  // Archivar en una carpeta que no existe pero se parece a otra («Budapest» y ya hay «Viajes/Budapest»): se pregunta dónde . Si ya
+  // existe con otra escritura, se usa la suya. Si el usuario acaba de elegir crearla, no se vuelve a preguntar.
+  if (datos.intencion === 'archivar' && datos.archivos) {
+    const rev = revisarCarpetaPedida(datos.archivos.carpeta, contexto.carpetasConocidas ?? []);
+    const confirmada = carpetaConfirmada !== null && sinAcentos(carpetaConfirmada) === sinAcentos(datos.archivos.carpeta);
+    if (rev.parecidas && !confirmada) {
+      if (typeof contexto.mensaje !== 'string' || contexto.mensaje === '') throw new Error('Planificar: falta el texto del mensaje para guardar la pregunta de la carpeta');
+      const ids = datos.archivos.refs.map((r) => archivos.refs[r]).filter((x) => typeof x === 'string');
+      const texto = textoCarpetaParecida(rev.ruta, rev.parecidas, ids.length);
+      const turno = JSON.stringify({ intencion: 'aclarar', motivo: 'carpeta_parecida', origen: 'codigo', opciones: rev.parecidas, nueva: rev.ruta, archivos: ids, nombre: datos.archivos.nombre ?? null, pregunta: texto, items: [], respuesta_usuario: texto });
+      return {
+        peticiones: [
+          ...(contexto.pendienteId ? [cerrarAnterior()] : []),
+          marcarMensaje({ procesado: true, error: null, pregunta: texto, pregunta_pendiente: true, hilo: [{ rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turno }] }),
+        ],
+        meta: { ...meta, intencion: 'aclarar', pregunta: texto, respuesta_usuario: texto, bloqueo: 'carpeta_parecida' },
+      };
+    }
+    datos.archivos.carpeta = rev.ruta;
   }
 
   const peticiones = [];
@@ -2941,7 +3556,8 @@ const refs = construccion.refs ?? {};
 // La conversación: este mensaje (los mensajes seguidos ya juntados por el flujo de WhatsApp), la pregunta anterior que contesta (si la
 // hay) y el hilo guardado hasta ella
 const contexto = {
-  mensaje: $('Entrada').first().json.mensaje,
+  // Si el mensaje acepta una propuesta concreta de la secretaria , se procesa la orden propuesta como si la hubiera escrito
+  mensaje: typeof construccion.mensaje_efectivo === 'string' && construccion.mensaje_efectivo !== '' ? construccion.mensaje_efectivo : $('Entrada').first().json.mensaje,
   // Demasiados mensajes seguidos (lo decide el flujo de WhatsApp): no se procesa nada y se contesta con su aviso
   avisoDemasiados: $('Entrada').first().json.demasiados === true ? String($('Entrada').first().json.aviso_demasiados ?? '') : '',
   pendienteId: construccion.pendiente_id ?? null,
@@ -2963,6 +3579,20 @@ const contexto = {
   reciente: construccion.reciente && typeof construccion.reciente === 'object' ? construccion.reciente : null,
   // Referencias (a1…) de los archivos a los que se refiere este mensaje: su pie o la respuesta a su confirmación
   archivosCitados: Array.isArray(construccion.archivos_citados) ? construccion.archivos_citados.filter((r) => typeof r === 'string' && Object.prototype.hasOwnProperty.call(construccion.refs_archivos ?? {}, r)) : [],
+  // El último lote de archivos sin sitio y las carpetas conocidas 
+  loteReciente: Array.isArray(construccion.lote_reciente) ? construccion.lote_reciente.filter((r) => typeof r === 'string' && Object.prototype.hasOwnProperty.call(construccion.refs_archivos ?? {}, r)) : [],
+  carpetasConocidas: Array.isArray(construccion.carpetas_conocidas) ? construccion.carpetas_conocidas.filter((c) => c && typeof c.ruta === 'string') : [],
+  // Los últimos archivos que movió o guardó la secretaria («mueve esos archivos a X») y los archivos recientes por nombre 
+  movidosRecientes: construccion.movidos_recientes && Array.isArray(construccion.movidos_recientes.ids)
+    ? {
+        ids: construccion.movidos_recientes.ids.filter((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 50),
+        // «Déjalo como estaba» 
+        ultimo: construccion.movidos_recientes.ultimo === true,
+        deshacer: Array.isArray(construccion.movidos_recientes.deshacer) ? construccion.movidos_recientes.deshacer.filter((d) => d && /^[0-9a-f-]{36}$/i.test(d.id ?? '') && typeof d.de === 'string' && typeof d.a === 'string') : [],
+        vaciar: Array.isArray(construccion.movidos_recientes.vaciar) ? construccion.movidos_recientes.vaciar.filter((r) => typeof r === 'string') : [],
+      }
+    : null,
+  archivosConocidos: Array.isArray(construccion.archivos_conocidos) ? construccion.archivos_conocidos.filter((a) => a && typeof a.id === 'string' && typeof a.nombre === 'string') : [],
 };
 
 // La agenda (eventos y tareas con fecha límite pendientes) llega con las referencias cortas; aquí se pasan a ids reales
@@ -2990,9 +3620,13 @@ const plan = planificar({ resp, mensajeId, config: configPlan, ahora: new Date()
 // ellas) y Resultado se lo dice antes de la respuesta. Las decide «Construir petición».
 const ignoradas = (Array.isArray(construccion.preguntas_ignoradas) ? construccion.preguntas_ignoradas : [])
   .filter((q) => q && typeof q.id === 'string' && /^[0-9a-f-]{36}$/i.test(q.id) && q.id !== construccion.pendiente_id);
+// La propuesta aceptada queda contestada (las órdenes que se ejecutan por código no siempre cierran la pregunta anterior)
+if (construccion.sugerencia_aceptada === true && typeof construccion.pendiente_id === 'string' && /^[0-9a-f-]{36}$/i.test(construccion.pendiente_id) && !plan.peticiones.some((p) => p.etiqueta === 'cerrar pregunta anterior')) {
+  plan.peticiones.unshift({ etiqueta: 'cerrar pregunta anterior', metodo: 'PATCH', url: `${config.supabase_url.replace(/\/+$/, '')}/rest/v1/mensajes?id=eq.${construccion.pendiente_id}`, cuerpo: { pregunta_pendiente: false }, prefer: 'return=minimal' });
+}
 if (ignoradas.length > 0) {
   plan.peticiones.unshift({ etiqueta: 'cerrar preguntas sin contestar', metodo: 'PATCH', url: `${config.supabase_url.replace(/\/+$/, '')}/rest/v1/mensajes?id=in.(${ignoradas.map((q) => q.id).join(',')})`, cuerpo: { pregunta_pendiente: false }, prefer: 'return=minimal' });
-  // Las ofertas de la charla se cierran sin decir nada (no era una pregunta que hubiera que contestar, sección 59)
+  // Las ofertas de la charla se cierran sin decir nada (no era una pregunta que hubiera que contestar)
   plan.meta.preguntas_ignoradas = ignoradas.filter((q) => q.silenciosa !== true).map((q) => String(q.pregunta ?? ''));
 }
 return plan.peticiones.map((p) => ({ json: { ...p, meta: plan.meta } }));

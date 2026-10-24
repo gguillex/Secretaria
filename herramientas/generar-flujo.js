@@ -71,7 +71,7 @@ function codigoComandos(planificar = leer(ruta('herramientas', 'flujo', 'planifi
     constante('NIVELES_CARPETA_MAX'),
     funcion('segmentosCarpeta'),
     lineas.slice(ini, fin).join('\n'),
-    'return { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta };',
+    'return { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, carpetaConocida, clavesIguales, nombresParecidos, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento };',
     '})()',
   ].join('\n');
 }
@@ -123,6 +123,8 @@ const ORDEN = [
   'Leer horario',
   'Leer respuesta citada',
   'Leer quitados',
+  'Leer carpetas',
+  'Leer conversación',
   'Construir petición',
   '¿Hace falta el modelo?',
   'Modelo',
@@ -262,6 +264,28 @@ function construirFlujoBase() {
       {
         method: 'GET',
         url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,estado,quitado_en,recordar_en,fecha_limite,lista,proyecto&quitado_en=gte.{{ new Date(Date.now() - 7 * 86400000).toISOString() }}&estado=in.(archivado,hecho)&order=quitado_en.desc&limit=300`,
+        ...supabase,
+      },
+      { alwaysOutputData: true, onError: 'continueRegularOutput' },
+    ),
+    // Las carpetas que existen o se han pedido (función carpetas_conocidas, base de datos 1.5): para no crear una carpeta parecida a otra
+    // y para reconocer «mueve Budapest a Viajes». Sin la base de datos 1.5 falla sin cortar el flujo y todo sigue como antes.
+    nodoHttp(
+      47,
+      'Leer carpetas',
+      x('Leer carpetas'),
+      { method: 'POST', url: `={{ ${CFG}.supabase_url }}/rest/v1/rpc/carpetas_conocidas`, ...supabase, sendBody: true, specifyBody: 'json', jsonBody: '{}' },
+      { alwaysOutputData: true, onError: 'continueRegularOutput' },
+    ),
+    // Los últimos mensajes tuyos que se contestaron (con lo que se contestó), anteriores a este y de los últimos MEMORIA_MIN minutos: la memoria
+    // de la conversación . Necesita la base de datos 1.4 (respuesta_texto); si falla, no corta el flujo y el modelo no ve la conversación.
+    nodoHttp(
+      48,
+      'Leer conversación',
+      x('Leer conversación'),
+      {
+        method: 'GET',
+        url: `={{ ${CFG}.supabase_url }}/rest/v1/mensajes?select=wa_message_id,tipo_entrada,texto_original,respuesta_texto,hilo,created_at&respuesta_texto=not.is.null&created_at=gte.{{ encodeURIComponent(new Date(Date.now() - ${CFG}.memoria_min * 60000).toISOString()) }}&created_at=lt.{{ encodeURIComponent($('Guardar mensaje').first().json.created_at || new Date().toISOString()) }}&order=created_at.desc&limit={{ ${CFG}.memoria_mensajes + 3 }}`,
         ...supabase,
       },
       { alwaysOutputData: true, onError: 'continueRegularOutput' },
@@ -568,7 +592,7 @@ function construirFlujoBase() {
       0,
       900,
       2,
-      '## Antes de ejecutar\n1. Elige la credencial en **Modelo** (Header Auth de Gemini) y en **Guardar mensaje**, **Leer memoria**, **Leer items pendientes**, **Leer pregunta pendiente**, **Leer archivos**, **Leer proyectos**, **Leer avisos**, **Leer horario**, **Leer respuesta citada**, **Leer quitados**, **Escribir en Supabase**, **Leer consulta**, **Contar archivos**, **Marcar borrado** y **Anotar movimiento** (Supabase API), y la de **Google Drive OAuth2** en **Listar nivel 1**, **Listar nivel 2**, **Listar nivel 3**, **Mandar a la papelera** **Mover en Drive** y **Crear en Drive**.\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**). En **Entrada**, el `MENSAJE` de prueba.\n3. Requiere la base de datos al día (`supabase/instalar.sql`, o los `supabase/actualizar-*.sql` que te falten si venías de una versión anterior). Sin ella algunos nodos fallan: `Leer avisos`, `Leer horario` y `Leer respuesta citada` sin cortar el flujo (faltarían esas funciones), `Marcar borrado` y **Anotar movimiento** después de que Drive ya haya hecho el cambio (Vigilar Drive lo avisará como hecho a mano). La cola de mensajes seguidos y el turno viven en el flujo de WhatsApp: este flujo no espera nunca.\n\nLas filas de prueba tienen `wa_message_id` que empieza por `manual-`.',
+      '## Antes de ejecutar\n1. Elige la credencial en **Modelo** (Header Auth de Gemini) y en **Guardar mensaje**, **Leer memoria**, **Leer items pendientes**, **Leer pregunta pendiente**, **Leer archivos**, **Leer proyectos**, **Leer avisos**, **Leer horario**, **Leer respuesta citada**, **Leer quitados**, **Leer carpetas**, **Leer conversación**, **Escribir en Supabase**, **Leer consulta**, **Contar archivos**, **Marcar borrado** y **Anotar movimiento** (Supabase API), y la de **Google Drive OAuth2** en **Listar nivel 1**, **Listar nivel 2**, **Listar nivel 3**, **Mandar a la papelera** **Mover en Drive** y **Crear en Drive**.\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**). En **Entrada**, el `MENSAJE` de prueba.\n3. Requiere la base de datos al día (`supabase/instalar.sql`, o los `supabase/actualizar-*.sql` que te falten si venías de una versión anterior). Sin ella algunos nodos fallan: `Leer avisos`, `Leer horario` y `Leer respuesta citada` sin cortar el flujo (faltarían esas funciones), `Marcar borrado` y **Anotar movimiento** después de que Drive ya haya hecho el cambio (Vigilar Drive lo avisará como hecho a mano). La cola de mensajes seguidos y el turno viven en el flujo de WhatsApp: este flujo no espera nunca.\n\nLas filas de prueba tienen `wa_message_id` que empieza por `manual-`.',
       // debajo de «Al ser llamado» (y = 200), sin taparlo
       360,
       260,
@@ -579,7 +603,7 @@ function construirFlujoBase() {
   // «Leer items pendientes» se repetía por cada fila de la memoria (y así en cadena), el modelo veía cada elemento duplicado («Tienes varias
   // citas de Médico» con una sola) y un mensaje lanzaba cientos de lecturas a Supabase. Ninguna depende
   // del item que recibe: cada una se ejecuta una sola vez y devuelve todas sus filas.
-  const LECTURAS_UNA_VEZ = ['Guardar mensaje', 'Leer memoria', 'Leer items pendientes', 'Leer pregunta pendiente', 'Leer archivos', 'Leer proyectos', 'Leer avisos', 'Leer horario', 'Leer respuesta citada', 'Leer quitados'];
+  const LECTURAS_UNA_VEZ = ['Guardar mensaje', 'Leer memoria', 'Leer items pendientes', 'Leer pregunta pendiente', 'Leer archivos', 'Leer proyectos', 'Leer avisos', 'Leer horario', 'Leer respuesta citada', 'Leer quitados', 'Leer carpetas', 'Leer conversación'];
   for (const nd of nodos) if (LECTURAS_UNA_VEZ.includes(nd.name)) nd.executeOnce = true;
 
   const conexiones = {};

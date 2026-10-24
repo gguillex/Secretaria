@@ -42,7 +42,7 @@ const ESPERA_TURNO_S = 2;
 // Aviso de varios archivos (base de datos 1.4). Segundos que se espera tras guardar un archivo por si llegan más seguidos: la última
 // ejecución de la tanda manda UN solo mensaje con todos los nombres en vez de uno por archivo. Se paga en CADA archivo (con 1 solo, el aviso
 // tarda estos segundos más). 0 = un aviso por archivo, como antes (y no hace falta la base de datos 1.4). Entre 0 y 15.
-const ESPERA_ARCHIVOS_S = 0;
+const ESPERA_ARCHIVOS_S = 4;
 // ==================================
 
 if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SUPABASE_URL) || SUPABASE_URL.includes('TU-PROYECTO')) {

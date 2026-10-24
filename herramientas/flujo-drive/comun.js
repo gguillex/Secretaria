@@ -127,6 +127,8 @@ function resolverRuta(segmentos, raizId, hijos) {
 //   padres     respuestas de GET files/{id}?fields=id,name,parents,trashed, en el mismo orden: { statusCode, body }
 //   raizId     id de la carpeta "Secretaria"
 //   niveles    listados de carpetas por nivel (hijas de la raíz, de esas, y de esas): [{ statusCode, body }]
+//   recientes  carpetas que creó una pasada anterior hace menos de 60 s ({ drive_id, padre_id, nombre }, tabla carpetas_creadas de la
+//              base de datos 1.5): cuentan como existentes aunque Drive aún no las liste, para no crearlas dos veces (pasadas cada 10 s)
 // Devuelve { acciones, fallos }. Cada acción lleva metodo, url y cuerpo (lo que ejecuta el nodo HTTP) y, si es
 // de un archivo, archivo_id, updated_at (para escribir con condición) y carpeta_id (destino).
 //   crear_carpeta  falta una carpeta de la ruta: se crea y el archivo se mueve en la pasada siguiente
@@ -135,11 +137,17 @@ function resolverRuta(segmentos, raizId, hijos) {
 //   limpiar        no hay nada que hacer (sin destino ni cambio de nombre, en la papelera o ya no existe)
 //   carpeta_lista  una carpeta pedida ya existe entera: se anota su id y se limpia la marca (PATCH vacío sobre la carpeta)
 // El destino sale de la carpeta pedida si la hay (manda siempre) o, si no, del item.
-function planificarAcciones({ archivos, carpetas = [], padres, raizId, niveles }) {
+function planificarAcciones({ archivos, carpetas = [], padres, raizId, niveles, recientes = [] }) {
   const acciones = [];
   const fallos = [];
   const creadas = new Set();
   const hijos = hijosPorPadre(niveles);
+  for (const r of recientes) {
+    if (!r || typeof r.drive_id !== 'string' || typeof r.padre_id !== 'string' || typeof r.nombre !== 'string') continue;
+    const lista = hijos.get(r.padre_id) ?? [];
+    if (!lista.some((c) => c.id === r.drive_id || clave(c.name) === clave(r.nombre))) lista.push({ id: r.drive_id, name: r.nombre });
+    hijos.set(r.padre_id, lista);
+  }
 
   // Crea el primer nivel que falta de una ruta (un nivel por pasada). Si dos peticiones piden la misma carpeta (aunque
   // cambie la capitalización) se crea una sola vez.

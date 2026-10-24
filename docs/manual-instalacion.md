@@ -576,7 +576,8 @@ sale en rojo, ábrela: el nodo rojo y su mensaje dicen qué pasa.
       `guárdala en Fotos` → en 1–2 minutos pasa a `Secretaria/Fotos`.
 - [ ] Una **nota de voz** (`qué tengo hoy`) → la respuesta, como si lo hubieras escrito. Un audio que no se entiende da un aviso.
 - [ ] `dame las fotos` → te las manda agrupadas por carpeta. `dame todo` y `dame la jerarquía` responden al momento (sin modelo).
-- [ ] `crea la carpeta Pruebas` y `crea la carpeta Cosas`; después `mete la carpeta Pruebas dentro de Cosas` → mueve la carpeta en Drive.
+- [ ] `crea la carpeta Pruebas` y `crea la carpeta Cosas`; después `mete la carpeta Pruebas dentro de Cosas` → mueve la carpeta en Drive (en unos segundos).
+- [ ] Manda dos fotos seguidas → un solo aviso con las dos. Respóndele `guárdalas en Cosas`; después `mueve las fotos de Cosas a Cosas/Fotos`, `déjalo como estaba` y comprueba en Drive que cada cosa acabó donde debía.
 - [ ] **Al día siguiente**, sin tocar nada: llega el **resumen de las 7:00** (si escribiste en las 23 h anteriores; ver la nota sobre la
       ventana de 24 h en [Problemas frecuentes](#16-problemas-frecuentes)).
 

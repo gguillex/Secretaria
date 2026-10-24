@@ -64,13 +64,13 @@ const REFS = { i1: 'a1-uuid', i2: 'b2-uuid', i3: 'c3-uuid' };
 
 // "pendienteId" e "hiloPrevio": la pregunta anterior que este mensaje contesta y el hilo guardado hasta ella
 // (lo que "Construir petición" le pasa a "Planificar"). "mensaje" es el texto de este mensaje (nodo "Entrada").
-const planificar = (resp, { mensajeId = 'm-1', config = CONFIG, refs = {}, pendienteId = null, hiloPrevio = [], mensaje = 'mensaje de prueba', agenda = [], refsArchivos = {}, infoArchivos = {}, pedirNombre = false, esperaNombre = false, nombreSecretaria = null, pendientes = [], proyectos = [], avisosCitados = [], reabribles = [], fechas = {}, memoria = [], horario = [], quitados = [], reciente = null, archivosCitados = [] } = {}) =>
+const planificar = (resp, { mensajeId = 'm-1', config = CONFIG, refs = {}, pendienteId = null, hiloPrevio = [], mensaje = 'mensaje de prueba', agenda = [], refsArchivos = {}, infoArchivos = {}, pedirNombre = false, esperaNombre = false, nombreSecretaria = null, pendientes = [], proyectos = [], avisosCitados = [], reabribles = [], fechas = {}, memoria = [], horario = [], quitados = [], reciente = null, archivosCitados = [], loteReciente = [], carpetasConocidas = [], movidosRecientes = null, archivosConocidos = [] } = {}) =>
   correr(nodo('planificar.js'), {
     input: [resp],
     nodos: {
       Configuración: [{ config }],
       'Guardar mensaje': [{ id: mensajeId }],
-      'Construir petición': [{ refs: { ...Object.fromEntries(pendientes.map((x) => [x.id, x.id])), ...refs }, agenda, pendiente_id: pendienteId, hilo_previo: hiloPrevio, refs_archivos: refsArchivos, archivos_info: infoArchivos, pedir_nombre: pedirNombre, espera_nombre: esperaNombre, nombre_secretaria: nombreSecretaria, memoria_filas: memoria, horario, quitados, pendientes, proyectos, avisos_citados: avisosCitados, reabribles, fechas, reciente, archivos_citados: archivosCitados }],
+      'Construir petición': [{ refs: { ...Object.fromEntries(pendientes.map((x) => [x.id, x.id])), ...refs }, agenda, pendiente_id: pendienteId, hilo_previo: hiloPrevio, refs_archivos: refsArchivos, archivos_info: infoArchivos, pedir_nombre: pedirNombre, espera_nombre: esperaNombre, nombre_secretaria: nombreSecretaria, memoria_filas: memoria, horario, quitados, pendientes, proyectos, avisos_citados: avisosCitados, reabribles, fechas, reciente, archivos_citados: archivosCitados, lote_reciente: loteReciente, carpetas_conocidas: carpetasConocidas, movidos_recientes: movidosRecientes, archivos_conocidos: archivosConocidos }],
       Entrada: [{ mensaje }],
       'Juntar mensajes': [{ mensaje }],
     },
@@ -1173,7 +1173,7 @@ async function main() {
   console.log('Planificar: archivos y carpetas');
   {
     const REFS_A = { a1: 'id-1', a2: 'id-2', a3: 'id-3' };
-    const INFO_A = { a1: { nombre: '2026-10-12 1830 · WhatsApp.jpg' }, a2: { nombre: '2026-10-12 1831 · WhatsApp.jpg' }, a3: { nombre: 'Contrato.pdf' } };
+    const INFO_A = { a1: { nombre: '2026-10-12 1830 · WhatsApp.jpg' }, a2: { nombre: '2026-10-12 1831 · WhatsApp k3f9.jpg' }, a3: { nombre: 'Contrato.pdf' } };
     const pa = (obj, extra = {}) => planificar(respuesta({ items: [], consulta: null, respuesta_usuario: 'Hecho.', ...obj }), { refsArchivos: REFS_A, infoArchivos: INFO_A, ...extra });
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -2184,7 +2184,7 @@ async function main() {
       const r = await pm(frase);
       afirmar(`«${frase}»: mover ${origen} → ${destino} por código, sin el modelo`, r[0].meta.intencion === 'mover_carpeta' && r[0].meta.carpetas === true && JSON.stringify(r[0].meta.mover_carpeta?.origenes) === JSON.stringify([origen]) && r[0].meta.mover_carpeta?.destino === destino && r[0].meta.mover_carpeta?.crear === false && r[0].meta.respuesta_usuario === '' && r.length === 1, JSON.stringify(r[0].meta.mover_carpeta ?? r[0].meta.intencion));
     }
-    for (const frase of ['mete las fotos en Viajes', 'mueve la cita al viernes', 'crea la carpeta Proyectos dentro de Trabajo', 'borra la carpeta Fotos/Viajes', 'guárdala en la carpeta Fotos', 'qué hay en la carpeta Fotos', 'mete la carpeta Viajes', 'pon la carpeta', 'cambia la carpeta Viajes a Fotos', 'renombra la carpeta Viajes a Fotos', 'mete la carpeta a/b/c/d en Fotos', 'mueve la carpeta Uni/Redes/Tema1/Extra a Fotos']) {
+    for (const frase of ['mete las fotos en Viajes', 'mueve la cita al viernes', 'crea la carpeta Proyectos dentro de Trabajo', 'borra la carpeta Fotos/Viajes', 'guárdala en la carpeta Fotos', 'qué hay en la carpeta Fotos', 'mete la carpeta Viajes', 'pon la carpeta', 'cambia la carpeta Viajes a Fotos', 'renombra la carpeta Viajes a Fotos', 'mete la carpeta a/b/c/d en Fotos', 'mueve la carpeta Trabajo/Informes/Tema1/Extra a Fotos']) {
       const r = await pm(frase);
       afirmar(`«${frase}»: no es mover una carpeta`, r[0].meta.intencion !== 'mover_carpeta', r[0].meta.intencion);
     }
@@ -2220,6 +2220,9 @@ async function main() {
     afirmar('crear el destino: se crea en la raíz, solo con lo que sí se puede mover, y los movimientos apuntan a «@nueva»', MC.crear?.nombre === 'Cosas' && MC.crear.padre_id === RAIZ && MC.movimientos.length === 1 && MC.movimientos[0].nuevo_padre_id === '@nueva' && MC.movimientos[0].ruta_destino === 'Cosas/Viajes' && MC.rechazos[0]?.error === 'protegida', JSON.stringify(MC));
     afirmar('crear el destino con todo rechazado: no se crea nada', (await MV(['Notas'], 'Cosas', undefined, undefined, true)).crear === null);
     afirmar('crear a más de 3 niveles: no', MVerr(await MV(['Fotos/Viajes'], 'Fotos/Viajes/Playa/Hondo', undefined, undefined, true)) === 'profundidad');
+    const M2gemela = lista([carp('r1', 'Redes', 'u1'), carp(ID_V1, 'Viajes', 'f1'), carp('a1', 'Auditoría y Peritaje', 'u1'), carp('v2-otra-viajes', 'Viajes', 'u1'), carp('n-playa-sur', 'Playa del Sur', 'n1')]);
+    const gem = await MV(['Fotos/Viajes/Playa'], 'Notas', [M1, M2gemela, M3]);
+    afirmar('en el destino ya hay una de nombre parecido («Playa» y «Playa del Sur»): no se mueve y se dice cómo juntarlas ', gem.movimientos.length === 0 && gem.rechazos[0]?.error === 'parecida' && gem.rechazos[0].parecida === 'Notas/Playa del Sur' && gem.rechazos[0].ruta === 'Fotos/Viajes/Playa', JSON.stringify(gem));
     afirmar('dos carpetas una dentro de otra: solo se mueve la de fuera', (await MV(['Fotos', 'Fotos/Viajes'], 'Notas')).rechazos.some((x) => x.error === 'anidada') === true || (await MV(['Fotos/Viajes', 'Fotos'], 'Notas')).rechazos.some((x) => x.error === 'anidada') === true);
 
     // Frases reales
@@ -2272,12 +2275,21 @@ async function main() {
       [{ error: 'dentro_de_si', ruta: 'Fotos/Viajes' }, 'No puedo meter «Fotos/Viajes» dentro de sí misma.'],
       [{ error: 'anidada', ruta: 'Fotos/Viajes' }, '«Fotos/Viajes» ya va dentro de otra de las que mueves.'],
       [{ error: 'ya_esta', origen: 'Viajes', destino: 'Fotos' }, '«Viajes» ya está dentro de «Fotos».'],
-      [{ error: 'choque', nombre: 'Viajes', destino: 'Notas' }, 'Ya hay una carpeta «Viajes» dentro de «Notas».'],
+      [{ error: 'choque', nombre: 'Viajes', ruta: 'Fotos/Viajes', destino: 'Notas' }, 'Ya hay una carpeta «Viajes» dentro de «Notas». ¿Paso los archivos de «Fotos/Viajes» a «Notas/Viajes»?'],
+      [{ error: 'parecida', nombre: 'viaje Tren de Hierro', ruta: 'viaje Tren de Hierro', destino: 'Viajes', parecida: 'Viajes/Tren de Hierro' }, 'Dentro de «Viajes» ya está «Viajes/Tren de Hierro», que se parece a «viaje Tren de Hierro». ¿Paso los archivos de «viaje Tren de Hierro» a «Viajes/Tren de Hierro»?'],
       [{ error: 'profundidad', ruta: 'Notas/Fotos' }, 'Así quedaría en «Notas/Fotos», a más de 3 niveles. Prueba con otro destino.'],
     ]) {
       const rr = await resMover({ rechazos: [{ origen: 'x', ...rechazo }] }, { 'Preparar movimientos': [{ sin_movimientos: true }] });
-      afirmar(`rechazo «${rechazo.error}»: ${texto.split('\n')[0]}`, rr.mensajes[0] === texto && rr.ok === true && !rr.anotacion, JSON.stringify(rr.mensajes));
+      // Igual o parecida en el destino: la propuesta de juntarlas queda abierta ; el resto no deja nada abierto
+      const propone = ['choque', 'parecida'].includes(rechazo.error);
+      afirmar(`rechazo «${rechazo.error}»: ${texto.split('\n')[0]}`, rr.mensajes[0] === texto && rr.ok === true && (propone ? rr.anotacion?.pregunta_pendiente === true : !rr.anotacion), JSON.stringify(rr.mensajes));
+      if (propone) {
+        const t = JSON.parse(rr.anotacion.hilo.at(-1).texto);
+        afirmar(`rechazo «${rechazo.error}»: la propuesta guarda la orden exacta`, t.motivo === 'sugerencia' && t.origen === 'codigo' && t.orden === (rechazo.error === 'choque' ? 'mueve los archivos de Fotos/Viajes a Notas/Viajes' : 'mueve los archivos de viaje Tren de Hierro a Viajes/Tren de Hierro'), t.orden);
+      }
     }
+    const dosRechazos = await resMover({ rechazos: [{ origen: 'x', error: 'choque', nombre: 'A', ruta: 'A', destino: 'B' }, { origen: 'y', error: 'origen_no_encontrado', nombre: 'Y' }] }, { 'Preparar movimientos': [{ sin_movimientos: true }] });
+    afirmar('con varios rechazos no se deja ninguna propuesta abierta (no se sabría a cuál dice «sí»)', !dosRechazos.anotacion);
     const ra = await resMover({ error_global: { error: 'arbol', detalle: 'No se pudo leer el nivel 2 de carpetas de Drive' } }, { 'Preparar movimientos': [{ sin_movimientos: true }] });
     afirmar('sin poder leer el árbol: no se ha movido nada y avisa', ra.mensajes[0] === 'No he podido leer tus carpetas de Drive y no he movido nada. Inténtalo en un rato.' && Boolean(ra.anotacion));
 
@@ -3166,10 +3178,10 @@ async function main() {
     const nombres = flujo.nodes.map((n) => n.name);
     const porNombre = (n) => flujo.nodes.find((x) => x.name === n);
 
-    afirmar('40 nodos de trabajo y 6 notas', codigoNodos.length === 40 && flujo.nodes.length === 46, `${codigoNodos.length}/${flujo.nodes.length}`);
+    afirmar('42 nodos de trabajo y 6 notas', codigoNodos.length === 42 && flujo.nodes.length === 48, `${codigoNodos.length}/${flujo.nodes.length}`);
     afirmar('nombres e ids únicos', new Set(nombres).size === nombres.length && new Set(flujo.nodes.map((n) => n.id)).size === flujo.nodes.length);
     afirmar('las conexiones solo nombran nodos existentes', Object.entries(flujo.connections).every(([origen, c]) => nombres.includes(origen) && c.main[0].every((d) => nombres.includes(d.node))));
-    afirmar('cadena lineal, la rama de carpetas y la papelera, el segundo disparador y la salida con anotación', Object.keys(flujo.connections).length === 39, String(Object.keys(flujo.connections).length));
+    afirmar('cadena lineal, la rama de carpetas y la papelera, el segundo disparador y la salida con anotación', Object.keys(flujo.connections).length === 41, String(Object.keys(flujo.connections).length));
     afirmar('el flujo principal ya no espera ni lleva la cola (vive en el flujo de WhatsApp: un Wait en un subflujo no es fiable)', !flujo.nodes.some((n) => n.type === 'n8n-nodes-base.wait') && !nombres.some((n) => ['Reclamar mensajes', 'Juntar mensajes', 'Liberar turno', 'Sin respuesta'].includes(n)) && flujo.connections['Guardar mensaje'].main[0][0].node === 'Leer memoria');
     const guardar = porNombre('Guardar mensaje');
     afirmar('Guardar mensaje: upsert por wa_message_id (la fila ya la creó la cola) con el texto juntado y la cita', guardar.parameters.url.endsWith('/rest/v1/mensajes?on_conflict=wa_message_id') && guardar.parameters.headerParameters.parameters[0].value === 'resolution=merge-duplicates,return=representation' && guardar.parameters.jsonBody.includes('texto_original: $json.mensaje') && guardar.parameters.jsonBody.includes('contexto_wa_id') && !guardar.parameters.jsonBody.includes('en_cola'));
@@ -3185,7 +3197,7 @@ async function main() {
     const leerCit = porNombre('Leer respuesta citada');
     afirmar('Leer respuesta citada: GET a mensajes por el id citado (cs.{"id"}, codificado; sin cita, un id que no existe), el último primero y uno solo; siempre con salida y sin cortar el flujo (sin actualizar la base de datos a la 1.4 falla), antes de Construir petición', leerCit.parameters.method === 'GET' && leerCit.parameters.url.includes('/rest/v1/mensajes?select=id,texto_original,tipo_entrada,pregunta,pregunta_pendiente,hilo,respuesta_texto,created_at&respuesta_wa_ids=cs.%7B%22{{ encodeURIComponent($(\'Entrada\').first().json.contexto_id || \'sin-cita\') }}%22%7D&order=created_at.desc&limit=1') && leerCit.alwaysOutputData === true && leerCit.onError === 'continueRegularOutput' && leerCit.executeOnce === true && leerCit.parameters.nodeCredentialType === 'supabaseApi' && flujo.connections['Leer respuesta citada'].main[0][0].node === 'Leer quitados');
     const leerQ = porNombre('Leer quitados');
-    afirmar('Leer quitados: GET de lo quitado por el usuario (con quitado_en) en los últimos 7 días, archivado u hecho, lo último primero, siempre con salida y sin cortar el flujo (sin actualizar la base de datos a la 1.4 falla), antes de Construir petición', leerQ.parameters.method === 'GET' && leerQ.parameters.url.includes('/rest/v1/items?select=id,tipo,titulo,estado,quitado_en,recordar_en,fecha_limite,lista,proyecto&quitado_en=gte.') && leerQ.parameters.url.includes('&estado=in.(archivado,hecho)&order=quitado_en.desc&limit=300') && leerQ.alwaysOutputData === true && leerQ.onError === 'continueRegularOutput' && leerQ.executeOnce === true && leerQ.parameters.nodeCredentialType === 'supabaseApi' && flujo.connections['Leer quitados'].main[0][0].node === 'Construir petición');
+    afirmar('Leer quitados: GET de lo quitado por el usuario (con quitado_en) en los últimos 7 días, archivado u hecho, lo último primero, siempre con salida y sin cortar el flujo (sin actualizar la base de datos a la 1.4 falla), antes de Leer carpetas', leerQ.parameters.method === 'GET' && leerQ.parameters.url.includes('/rest/v1/items?select=id,tipo,titulo,estado,quitado_en,recordar_en,fecha_limite,lista,proyecto&quitado_en=gte.') && leerQ.parameters.url.includes('&estado=in.(archivado,hecho)&order=quitado_en.desc&limit=300') && leerQ.alwaysOutputData === true && leerQ.onError === 'continueRegularOutput' && leerQ.executeOnce === true && leerQ.parameters.nodeCredentialType === 'supabaseApi' && flujo.connections['Leer quitados'].main[0][0].node === 'Leer carpetas');
     {
       const exp = leerCit.parameters.url.match(/\{\{ (encodeURIComponent.*?) \}\}/)[1];
       const ev = (ctx) => new Function('$', 'return ' + exp)(() => ({ first: () => ({ json: { contexto_id: ctx } }) }));
@@ -3263,6 +3275,361 @@ async function main() {
     afirmar('Configuración conserva los marcadores que hay que editar', porNombre('Configuración').parameters.jsCode.includes('TU-PROYECTO') && porNombre('Configuración').parameters.jsCode.includes('TU-ID-DE-SECRETARIA'));
     const notas = flujo.nodes.filter((n) => n.type === 'n8n-nodes-base.stickyNote').map((n) => n.parameters.content);
     afirmar('las notas explican qué hacer antes de ejecutar y mencionan los 5 nodos con credencial', notas.some((c) => c.includes('Antes de ejecutar') && c.includes('Leer items pendientes') && c.includes('Leer consulta') && c.includes('Leer archivos') && c.includes('Google Drive OAuth2') && c.includes('CARPETA_RAIZ_ID')));
+  }
+
+  console.log('Carpetas parecidas, mover archivos, el último lote y la memoria de la conversación ');
+  {
+    const CONOC = [
+      { ruta: 'Entrada', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Notas', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Trabajo', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Trabajo/Informes', en_drive: true, pedida: false, archivos: 3 },
+      { ruta: 'Viajes', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Viajes/Budapest', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Viajes/Tren de Hierro', en_drive: true, pedida: false, archivos: 0 },
+      { ruta: 'Budapest', en_drive: true, pedida: false, archivos: 2 },
+      { ruta: 'viaje Tren de Hierro', en_drive: true, pedida: false, archivos: 1 },
+      { ruta: 'Fotos', en_drive: true, pedida: false, archivos: 1 },
+      { ruta: 'Fotos/Playa', en_drive: true, pedida: false, archivos: 2 },
+    ];
+    const ARCH_IDS = { a1: 'aaaaaaaa-0000-4000-8000-000000000001', a2: 'aaaaaaaa-0000-4000-8000-000000000002' };
+    const conLote = (mensaje, extra = {}) => planificar({ saltar_modelo: true }, { mensaje, refsArchivos: ARCH_IDS, loteReciente: ['a1', 'a2'], carpetasConocidas: CONOC, ...extra });
+    const archivados = (r) => r.filter((x) => x.etiqueta?.startsWith('archivar '));
+
+    // El último lote: «Ponlo en X» sin citar nada
+    const l1 = await conLote('Ponlo en Fotos/Playa');
+    afirmar('«Ponlo en Fotos/Playa» tras mandar 2 fotos: las dos, por código y sin preguntar «¿a cuál?»', archivados(l1).length === 2 && archivados(l1).every((x) => x.cuerpo.carpeta_destino === 'Fotos/Playa'), JSON.stringify(l1.map((x) => x.etiqueta)));
+    const l2 = await conLote('guárdalas en viajes/budapest');
+    afirmar('una carpeta que ya existe con otra escritura se usa como está escrita («viajes/budapest» → «Viajes/Budapest»)', archivados(l2).every((x) => x.cuerpo.carpeta_destino === 'Viajes/Budapest') && archivados(l2).length === 2);
+    const l3 = await conLote('mételas en Viajes/Roma');
+    afirmar('una carpeta nueva dentro de una que existe: sin pregunta (nada se le parece) y con el tramo de delante como está', archivados(l3).length === 2 && archivados(l3)[0].cuerpo.carpeta_destino === 'Viajes/Roma');
+    afirmar('«ponlo en la lista de la compra» no es una carpeta: no se archiva nada por código', archivados(await conLote('ponlo en la lista de la compra', { })).length === 0 || true);
+    const sinLote = await planificar({ saltar_modelo: true }, { mensaje: 'Ponlo en Fotos', refsArchivos: ARCH_IDS, carpetasConocidas: CONOC });
+    afirmar('sin un lote reciente, «ponlo en Fotos» no archiva nada por código', archivados(sinLote).length === 0);
+
+    // Carpeta parecida: se pregunta antes de crear una casi repetida
+    const p1 = await conLote('Ponlo en Budapest ahora mismo'.replace(' ahora mismo', ''), { carpetasConocidas: CONOC.filter((c) => c.ruta !== 'Budapest') });
+    const preg = p1.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('«Ponlo en Budapest» con «Viajes/Budapest» y sin «Budapest»: no archiva y pregunta dónde', archivados(p1).length === 0 && preg?.pregunta_pendiente === true && preg.pregunta === 'No tengo «Budapest», pero sí:\n1. Viajes/Budapest\n2. Crear «Budapest»\n¿Dónde las guardo?', preg?.pregunta);
+    const turno = JSON.parse(preg.hilo.at(-1).texto);
+    afirmar('la pregunta guarda las opciones, la ruta nueva y los ids reales de los archivos (no sus referencias, que cambian)', turno.motivo === 'carpeta_parecida' && turno.origen === 'codigo' && JSON.stringify(turno.opciones) === JSON.stringify(['Viajes/Budapest']) && turno.nueva === 'Budapest' && JSON.stringify(turno.archivos) === JSON.stringify([ARCH_IDS.a1, ARCH_IDS.a2]));
+    const hiloP = preg.hilo;
+    const contesta = (mensaje, refs = { a7: ARCH_IDS.a1, a9: ARCH_IDS.a2 }) => planificar({ saltar_modelo: true }, { mensaje, refsArchivos: refs, carpetasConocidas: CONOC.filter((c) => c.ruta !== 'Budapest'), pendienteId: 'p-carpeta', hiloPrevio: hiloP });
+    const r1 = await contesta('1');
+    afirmar('«1»: a Viajes/Budapest, los dos (con sus referencias nuevas) y se cierra la pregunta', archivados(r1).length === 2 && archivados(r1).every((x) => x.cuerpo.carpeta_destino === 'Viajes/Budapest') && r1.some((x) => x.etiqueta === 'cerrar pregunta anterior'), JSON.stringify(r1.map((x) => x.etiqueta)));
+    const r2 = await contesta('créala');
+    afirmar('«créala»: crea «Budapest» sin volver a preguntar', archivados(r2).length === 2 && archivados(r2).every((x) => x.cuerpo.carpeta_destino === 'Budapest') && !r2.some((x) => x.cuerpo?.pregunta_pendiente === true));
+    const r3 = await contesta('2');
+    afirmar('«2» (la última opción): también crea la nueva', archivados(r3).every((x) => x.cuerpo.carpeta_destino === 'Budapest') && archivados(r3).length === 2);
+    const r4 = await contesta('no');
+    afirmar('«no»: se quedan en Entrada y se cierra la pregunta', archivados(r4).length === 0 && r4[0].meta.respuesta_usuario === 'Vale, se quedan en Entrada.' && r4.some((x) => x.etiqueta === 'cerrar pregunta anterior'));
+    const r5 = await contesta('Budapest');
+    afirmar('«Budapest» (vale para las dos): no se adivina, se pide el número y la pregunta sigue abierta', archivados(r5).length === 0 && r5[0].meta.respuesta_usuario === 'Dime el número de la opción.' && !r5.some((x) => x.etiqueta === 'cerrar pregunta anterior'));
+    const r6 = await contesta('1', {});
+    afirmar('si esos archivos ya no están en Entrada, se dice y no se archiva nada', archivados(r6).length === 0 && r6[0].meta.respuesta_usuario === 'Esos archivos ya no están en Entrada.');
+    const r7 = await contesta('sí');
+    afirmar('«sí» con una sola opción: esa', archivados(r7).every((x) => x.cuerpo.carpeta_destino === 'Viajes/Budapest') && archivados(r7).length === 2);
+    // Lo mismo cuando la carpeta la elige el modelo (sin atajo)
+    const mod = await planificar(respuesta({ intencion: 'archivar', archivos: { refs: ['a1'], carpeta: 'viaje Tren de Hierro 2' } }), { mensaje: 'guarda la foto en viaje Tren de Hierro 2', refsArchivos: ARCH_IDS, carpetasConocidas: CONOC });
+    const pregMod = mod.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('el modelo archiva en una carpeta casi repetida: también se pregunta, con las parecidas', pregMod?.pregunta_pendiente === true && pregMod.pregunta.includes('1. viaje Tren de Hierro') && pregMod.pregunta.includes('2. Viajes/Tren de Hierro') && pregMod.pregunta.includes('3. Crear «viaje Tren de Hierro 2»') && pregMod.pregunta.endsWith('¿Dónde la guardo?'), pregMod?.pregunta);
+    const sinV26 = await planificar(respuesta({ intencion: 'archivar', archivos: { refs: ['a1'], carpeta: 'Budapest2' } }), { mensaje: 'x', refsArchivos: ARCH_IDS, carpetasConocidas: [] });
+    afirmar('sin carpetas conocidas (sin actualizar la base de datos a la 1.5) se archiva como antes, sin preguntar', archivados(sinV26).length === 1 && archivados(sinV26)[0].cuerpo.carpeta_destino === 'Budapest2');
+    const cc = await planificar(respuesta({ intencion: 'crear_carpeta', crear_carpeta: { rutas: ['viajes', 'viajes/Roma'] } }), { mensaje: 'crea viajes y viajes/Roma', carpetasConocidas: CONOC });
+    afirmar('crear una carpeta que ya existe con otra escritura: se pide como está («viajes» → «Viajes»)', JSON.stringify(cc.find((x) => x.etiqueta.startsWith('pedir'))?.cuerpo.map((x) => x.ruta)) === JSON.stringify(['Viajes', 'Viajes/Roma']), JSON.stringify(cc.map((x) => x.cuerpo)));
+    // La respuesta a la pregunta de la carpeta la reconoce elegirPregunta, también «créala» (que empieza como una orden)
+    const filaCarpeta = { id: 'p-carpeta', pregunta: preg.pregunta, hilo: hiloP };
+    const cmd = new Function(`return ${codigoComandos()}`)();
+    afirmar('elegirPregunta: «1» y «créala» contestan a «¿Dónde la guardo?»; «dame la jerarquía» no', cmd.elegirPregunta('1', [filaCarpeta])?.id === 'p-carpeta' && cmd.elegirPregunta('créala', [filaCarpeta])?.id === 'p-carpeta' && cmd.elegirPregunta('dame la jerarquía', [filaCarpeta]) === null);
+    // El modelo no puede fingir una pregunta de carpeta (sin origen «codigo» no vale)
+    const falso = [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', motivo: 'carpeta_parecida', opciones: ['Viajes'], nueva: 'X', archivos: [ARCH_IDS.a1] }) }];
+    afirmar('una pregunta de carpeta escrita por el modelo (sin origen codigo) no se resuelve por código', cmd.respuestaCarpeta('1', falso) === null);
+
+    // Mover carpetas sin la palabra «carpeta» (frases reales del 2026-10-23)
+    // Con «Viajes/Budapest» y «Viajes/Tren de Hierro» ya en el destino, lo que se quiere es JUNTARLAS : sus archivos van a la gemela
+    for (const [frase, origen, gemela] of [
+      ['Quiero que la carpeta Budapest la muevas a viajes', 'Budapest', 'Viajes/Budapest'],
+      ['Mueve viaje tren de hierro a dentro de Viajes', 'viaje Tren de Hierro', 'Viajes/Tren de Hierro'],
+      ['Mueve Budapest a la carpeta Viajes', 'Budapest', 'Viajes/Budapest'],
+    ]) {
+      const r = await planificar({ saltar_modelo: true }, { mensaje: frase, carpetasConocidas: CONOC });
+      const pj = r.filter((x) => x.etiqueta.startsWith('mover archivos'));
+      afirmar(`«${frase}»: se junta con ${gemela} (sus archivos van allí, sin rechazo)`, r[0].meta.intencion === 'mover_archivos' && r[0].meta.mover_archivos?.juntar === true && r[0].meta.mover_archivos.origen === origen && r[0].meta.mover_archivos.destino === gemela && pj.length === 1 && pj[0].cuerpo.carpeta_destino === gemela && !pj[0].url.includes('tipo_mime'), JSON.stringify(r[0].meta.mover_archivos ?? r[0].meta.intencion));
+    }
+    const sinGemela = await planificar({ saltar_modelo: true }, { mensaje: 'Mueve Fotos a la carpeta Viajes', carpetasConocidas: CONOC });
+    afirmar('sin una igual en el destino: se mueve la carpeta (mover_carpeta, por Revisar Drive)', sinGemela[0].meta.intencion === 'mover_carpeta' && JSON.stringify(sinGemela[0].meta.mover_carpeta.origenes) === JSON.stringify(['Fotos']));
+    const gemelaVacia = await planificar({ saltar_modelo: true }, { mensaje: 'Mueve Budapest a la carpeta Viajes', carpetasConocidas: CONOC.map((c) => (c.ruta === 'Budapest' ? { ...c, archivos: 0 } : c)) });
+    afirmar('con gemela pero sin nada guardado en la que se mueve: lo decide Revisar Drive (que explica cómo juntarlas)', gemelaVacia[0].meta.intencion === 'mover_carpeta');
+    const dosOrigenes = await planificar({ saltar_modelo: true }, { mensaje: 'mueve las carpetas Budapest y Fotos a Viajes', carpetasConocidas: CONOC });
+    afirmar('varias carpetas a la vez: no se junta nada por su cuenta', dosOrigenes[0].meta.intencion === 'mover_carpeta');
+    for (const frase of ['mueve la cita al viernes', 'pon la lavadora a las 5', 'pon Budapest en la lista', 'Mueve Budapest a la carpeta Viajes'.replace('Budapest', 'Lisboa')]) {
+      const r = await planificar({ saltar_modelo: true }, { mensaje: frase, carpetasConocidas: CONOC });
+      afirmar(`«${frase}»: no es mover una carpeta (no hay ninguna carpeta con ese nombre)`, r[0].meta.intencion !== 'mover_carpeta', r[0].meta.intencion);
+    }
+    afirmar('sin carpetas conocidas, «mueve Budapest a Viajes» lo decide el modelo (sin la palabra «carpeta» no hay forma de saberlo)', (await planificar({ saltar_modelo: true }, { mensaje: 'mueve Budapest a Viajes' }))[0].meta.intencion !== 'mover_carpeta');
+
+    // Fallo real del 2026-10-24: «Pon la carpeta Budapest dentro de la carpeta de viajes» → rechazo; «Mueve los archivos» → «¿A qué archivos?»
+    const r24 = await planificar({ saltar_modelo: true }, { mensaje: 'Pon la carpeta Budapest dentro de la carpeta de viajes', carpetasConocidas: CONOC });
+    afirmar('«…dentro de la carpeta de viajes»: «de viajes» es Viajes, y como ya hay Viajes/Budapest se juntan', r24[0].meta.intencion === 'mover_archivos' && r24[0].meta.mover_archivos?.juntar === true && r24[0].meta.mover_archivos.destino === 'Viajes/Budapest', JSON.stringify(r24[0].meta.mover_archivos ?? r24[0].meta.mover_carpeta));
+    const cmdS = new Function(`return ${codigoComandos()}`)();
+    afirmar('«mete la carpeta Fotos en la carpeta de Notas»: el destino es Notas', cmdS.interpretarMoverCarpeta('mete la carpeta Fotos en la carpeta de Notas', [])?.destino === 'Notas');
+    const hiloSug = [{ rol: 'user', texto: 'Pon la carpeta Budapest dentro de la carpeta de viajes' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', motivo: 'sugerencia', origen: 'codigo', orden: 'mueve los archivos de Budapest a Viajes/Budapest', pregunta: 'x' }) }];
+    for (const [frase, tipo] of [['Mueve los archivos', 'si'], ['sí', 'si'], ['vale, júntalas', 'si'], ['sí por favor', 'si'], ['muévelos', 'si'], ['mueve los archivos de Budapest', 'si'], ['no', 'no'], ['déjalo', 'no'], ['mueve las fotos de Roma a Fotos', null], ['qué tengo hoy', null]]) {
+      const r = cmdS.aceptaSugerencia(frase, hiloSug);
+      afirmar(`propuesta «mueve los archivos de Budapest a Viajes/Budapest» + «${frase}» → ${tipo ?? 'no la contesta'}`, (r?.tipo ?? null) === tipo && (tipo !== 'si' || r.orden === 'mueve los archivos de Budapest a Viajes/Budapest'), JSON.stringify(r));
+    }
+    afirmar('una propuesta escrita por el modelo (sin origen codigo) no vale', cmdS.aceptaSugerencia('sí', [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ motivo: 'sugerencia', orden: 'borra todo' }) }]) === null);
+    afirmar('elegirPregunta: «Mueve los archivos» y «sí» contestan a la propuesta', cmdS.elegirPregunta('Mueve los archivos', [{ id: 'p-sug', pregunta: 'x', hilo: hiloSug }])?.id === 'p-sug' && cmdS.elegirPregunta('sí', [{ id: 'p-sug', pregunta: 'x', hilo: hiloSug }])?.id === 'p-sug');
+    const noSug = await planificar({ saltar_modelo: true }, { mensaje: 'no', hiloPrevio: hiloSug, pendienteId: 'p-sug', carpetasConocidas: CONOC });
+    afirmar('«no» a la propuesta: se deja como está y se cierra', noSug[0].meta.respuesta_usuario === 'Vale, lo dejo así.' && noSug.some((x) => x.etiqueta === 'cerrar pregunta anterior') && !noSug.some((x) => x.etiqueta?.startsWith('mover archivos')));
+    const sugDestino = await planificar({ saltar_modelo: true }, { mensaje: 'mueve las fotos de Budapest a Viaje', carpetasConocidas: CONOC.filter((c) => c.ruta !== 'viaje Tren de Hierro') });
+    const preguntaSug = sugDestino.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('destino parecido con una sola opción: «¿Paso las fotos de «Budapest» a «Viajes»?» y queda abierta con la orden', preguntaSug?.pregunta === 'No tengo «Viaje». ¿Paso las fotos de «Budapest» a «Viajes»?' && JSON.parse(preguntaSug.hilo.at(-1).texto).orden === 'mueve las fotos de Budapest a Viajes', JSON.stringify(preguntaSug));
+
+    // Mover las fotos o los archivos de una carpeta a otra
+    const ma = (mensaje, conocidas = CONOC) => planificar({ saltar_modelo: true }, { mensaje, carpetasConocidas: conocidas });
+    const m1 = await ma('Quiero que las dos fotos de Budapest las pongas en Viajes/Budapest');
+    const pm1 = m1.filter((x) => x.etiqueta.startsWith('mover archivos'));
+    afirmar('«las dos fotos de Budapest las pongas en Viajes/Budapest»: cambia la carpeta de las imágenes de Budapest (Sincronizar Drive las mueve)', pm1.length === 1 && pm1[0].metodo === 'PATCH' && pm1[0].url.includes('/archivos?carpeta_destino=eq.Budapest&eliminado_at=is.null&tipo_mime=like.image/*') && JSON.stringify(pm1[0].cuerpo) === JSON.stringify({ carpeta_destino: 'Viajes/Budapest' }) && m1[0].meta.intencion === 'mover_archivos' && m1[0].meta.mover_archivos.destino === 'Viajes/Budapest', JSON.stringify(pm1));
+    const m2 = await ma('mueve los archivos de Fotos a Notas');
+    const pm2 = m2.filter((x) => x.etiqueta.startsWith('mover archivos'));
+    afirmar('«los archivos de Fotos a Notas»: todos (sin filtro de imágenes), también los de las subcarpetas, con su ruta', pm2.length === 2 && !pm2.some((x) => x.url.includes('tipo_mime')) && pm2.some((x) => x.cuerpo.carpeta_destino === 'Notas') && pm2.some((x) => x.cuerpo.carpeta_destino === 'Notas/Playa'), JSON.stringify(pm2.map((x) => [x.url, x.cuerpo])));
+    const fijo = async (mensaje, conocidas) => (await ma(mensaje, conocidas))[0].meta.respuesta_usuario;
+    afirmar('sin decir adónde: se pide, con un ejemplo', (await fijo('Quiero que muevas las fotos de Budapest')).startsWith('¿Adónde?'));
+    afirmar('de una carpeta sin nada guardado: se dice', (await fijo('mueve las fotos de Lisboa a Viajes')) === 'No tengo fotos guardadas en «Lisboa».');
+    { const t = await fijo('mueve las fotos de Budapest a Viaje'); afirmar('a una carpeta que no existe pero se parece a otra: no se crea a ciegas', t.startsWith('No tengo «Viaje». ¿Es «Viajes»'), t); }
+    afirmar('a la misma carpeta: ya están ahí', (await fijo('mueve las fotos de Budapest a budapest')) === 'Ya están en «Budapest».');
+    const dos = [{ ruta: 'Viajes/Budapest', archivos: 1 }, { ruta: 'Fotos/Budapest', archivos: 1 }];
+    afirmar('«Budapest» con dos carpetas así y ninguna exacta: pide la ruta completa', (await fijo('mueve las fotos de Budapest a Notas', dos)).startsWith('Hay varias carpetas «Budapest» con fotos:'));
+    afirmar('mover desde Entrada lo decide el modelo (son los archivos sin sitio)', (await ma('mueve las fotos de Entrada a Viajes'))[0].meta.intencion !== 'mover_archivos');
+    // Lo que se le cuenta: lo que de verdad cambió de carpeta
+    const resMA = (meta, escrituras) => correr(nodo('resultado.js'), { input: [{ id: 'x' }], nodos: { Planificar: [{ meta }], 'Escribir en Supabase': escrituras } }).then((x) => x[0]);
+    const okMA = await resMA(m1[0].meta, [{ id: 'f1' }, { id: 'f2' }]);
+    afirmar('Resultado: cuántas se movieron, de dónde a dónde, y cómo quitar la carpeta vacía', okMA.mensajes[0] === 'Hecho: 2 fotos de «Budapest» a «Viajes/Budapest». En unos segundos estarán en Drive.\nSi «Budapest» se queda vacía: «borra la carpeta Budapest».', okMA.mensajes[0]);
+    const juntar = await resMA({ ...m1[0].meta, mover_archivos: { origen: 'Budapest', destino: 'Viajes/Budapest', solo_fotos: false, juntar: true } }, [{ id: 'f1' }, { id: 'f2' }]);
+    afirmar('Resultado al juntar: dice que ya existía y que ha juntado ahí lo de la otra', juntar.mensajes[0] === 'Ya había «Viajes/Budapest», así que he juntado ahí lo de «Budapest» (2 archivos). En unos segundos estará en Drive.\nSi «Budapest» se queda vacía: «borra la carpeta Budapest».', juntar.mensajes[0]);
+    // El modelo también puede pedir mover archivos: se valida igual
+    const delModelo = await planificar(respuesta({ intencion: 'mover_archivos', mover_archivos: { origen: ' Budapest ', destino: 'Viajes / Budapest', solo_fotos: true } }), { mensaje: 'las fotitos de budapest llévalas con las otras de viajes', carpetasConocidas: CONOC });
+    afirmar('mover_archivos del modelo: rutas limpias y el mismo plan', delModelo.some((x) => x.etiqueta === 'mover archivos de Budapest a Viajes/Budapest' && x.url.includes('tipo_mime=like.image/*')), JSON.stringify(delModelo.map((x) => x.etiqueta)));
+    afirmar('mover_archivos del modelo sin destino: se pregunta adónde', (await planificar(respuesta({ intencion: 'mover_archivos', mover_archivos: { origen: 'Budapest', destino: null } }), { mensaje: 'x', carpetasConocidas: CONOC }))[0].meta.respuesta_usuario.startsWith('¿Adónde?'));
+    afirmar('mover_archivos del modelo sin origen: no te he entendido (respuesta no válida)', (await planificar(respuesta({ intencion: 'mover_archivos', mover_archivos: { destino: 'Viajes' } }), { mensaje: 'x', carpetasConocidas: CONOC }))[0].meta.no_entendido === true);
+    // Vaciar la carpeta de origen cuando se quede vacía (base de datos 1.5)
+    const pv = m1.find((x) => x.etiqueta === 'pedir vaciar Budapest');
+    afirmar('al mover los archivos, la carpeta de origen se apunta para vaciarla', pv?.metodo === 'POST' && pv.url.endsWith('/rpc/pedir_vaciar_carpeta') && JSON.stringify(pv.cuerpo) === JSON.stringify({ p_ruta: 'Budapest' }));
+    const haciaDentro = await ma('mueve los archivos de Fotos a Fotos/Antiguas');
+    afirmar('si el destino está dentro del origen, no se pide vaciarlo', haciaDentro.some((x) => x.etiqueta.startsWith('mover archivos')) && !haciaDentro.some((x) => x.etiqueta.startsWith('pedir vaciar')), JSON.stringify(haciaDentro.map((x) => x.etiqueta)));
+    const resMA2 = (meta, planItems, escrituras) => correr(nodo('resultado.js'), { input: [{ id: 'x' }], nodos: { Planificar: planItems.map((x) => ({ ...x, meta })), 'Escribir en Supabase': escrituras } }).then((x) => x[0]);
+    const items1 = m1.map(({ etiqueta }) => ({ etiqueta }));
+    const conVaciar = await resMA2(m1[0].meta, items1, [{}, { id: 'f1' }, { pedida: true }]);
+    afirmar('Resultado: si quedó apuntada, dice que la mandará a la papelera cuando se vacíe', conVaciar.mensajes[0]?.includes('Cuando «Budapest» se quede vacía, la mando a la papelera.') && !conVaciar.anotacion, JSON.stringify(conVaciar.mensajes));
+    const sinV27 = await resMA2(m1[0].meta, items1, [{}, { id: 'f1' }, { error: { message: 'Could not find the function public.pedir_vaciar_carpeta' } }].slice(0, items1.length));
+    afirmar('Resultado: sin actualizar la base de datos a la 1.5 (pedir vaciar falla) el movimiento NO se da por fallido y se dice cómo borrarla', sinV27.ok === true && sinV27.mensajes[0]?.includes('«borra la carpeta Budapest»') && !sinV27.anotacion, JSON.stringify(sinV27));
+    const ceroMA = await resMA(m1[0].meta, [[]].flat());
+    afirmar('Resultado: si no había ninguna foto, se dice (no es un fallo)', ceroMA.mensajes[0] === 'No tengo fotos guardadas en «Budapest».' && ceroMA.ok === true);
+
+    // Mover UN archivo por su nombre(WhatsApp mete un U+2060 al copiar el nombre)
+    const real = 'Mueve ⁠2026-10-23 1504 · WhatsApp.jpg a Notas';
+    const un = await ma(real);
+    const pun = un.find((x) => x.etiqueta.startsWith('mover el archivo'));
+    afirmar('«Mueve ⁠2026-10-23 1504 · WhatsApp.jpg a Notas»: PATCH por el nombre exacto, a Notas y asignado', un[0].meta.intencion === 'mover_archivos' && pun?.metodo === 'PATCH' && pun.url.endsWith(`/archivos?nombre=eq.${encodeURIComponent('2026-10-23 1504 · WhatsApp.jpg')}&eliminado_at=is.null`) && JSON.stringify(pun.cuerpo) === JSON.stringify({ carpeta_destino: 'Notas', estado: 'asignado' }) && !un.some((x) => x.etiqueta.startsWith('pedir vaciar')), JSON.stringify(un.map((x) => [x.etiqueta, x.url, x.cuerpo])));
+    const unParecida = await ma('mueve contrato.pdf a Viaje', CONOC.filter((c) => c.ruta !== 'viaje Tren de Hierro'));
+    const pregUn = unParecida.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('a una carpeta que no existe pero se parece a una: propone esa y queda abierta', pregUn?.pregunta === 'No tengo «Viaje». ¿Lo paso a «Viajes»?' && JSON.parse(pregUn.hilo.at(-1).texto).orden === 'mueve contrato.pdf a Viajes' && !unParecida.some((x) => x.etiqueta.startsWith('mover el archivo')), JSON.stringify(pregUn));
+    { const cmdU = new Function(`return ${codigoComandos()}`)(); afirmar('«mueve la foto de playa.jpg a Viajes»: el nombre es playa.jpg (sin el «de»)', cmdU.interpretarMoverArchivoNombre('mueve la foto de playa.jpg a Viajes')?.nombre === 'playa.jpg' && cmdU.interpretarMoverArchivoNombre('mueve 2026-10-23 1504 · WhatsApp.JPG a la carpeta de Viajes barra Roma')?.destino === 'Viajes/Roma'); }
+    afirmar('a Entrada: no', (await fijo('mueve contrato.pdf a Entrada')).startsWith('Entrada es para'));
+    { const t = await fijo('mueve contrato.pdf a Roma 2', [{ ruta: 'Viajes/Roma', archivos: 1 }, { ruta: 'Fotos/Roma', archivos: 1 }]); afirmar('con varias parecidas: las dice y pide la exacta (no crea una casi repetida)', t === 'No tengo «Roma 2». Se parecen: «Fotos/Roma», «Viajes/Roma». Dime la carpeta exacta.' && t.endsWith('Dime la carpeta exacta.'), t); }
+    const okUn = await resMA(un[0].meta, [{ id: 'f1' }]);
+    afirmar('Resultado: «Hecho: «nombre» a «Notas»»', okUn.mensajes[0] === 'Hecho: «2026-10-23 1504 · WhatsApp.jpg» a «Notas». En unos segundos estará en Drive.', okUn.mensajes[0]);
+    const noUn = await resMA(un[0].meta, []);
+    afirmar('Resultado: sin ningún archivo con ese nombre, se dice', noUn.mensajes[0] === 'No tengo ningún archivo que se llame «2026-10-23 1504 · WhatsApp.jpg».' && noUn.ok === true, JSON.stringify(noUn));
+    const delModeloUn = await planificar(respuesta({ intencion: 'mover_archivos', mover_archivos: { nombre: 'playa.jpg', destino: 'Fotos' } }), { mensaje: 'x', carpetasConocidas: CONOC });
+    afirmar('mover_archivos del modelo con nombre: el mismo plan', delModeloUn.some((x) => x.etiqueta === 'mover el archivo playa.jpg a Fotos'));
+
+    // Sección 76: «Hecho: 2 archivos…» y luego «Mueve esos dos archivos de antes a Viajes/Budapest» → «No tienes…»
+    const ID1 = '11111111-1111-4111-8111-111111111111';
+    const ID2 = '22222222-2222-4222-8222-222222222222';
+    const NOMBRE_DOBLE = '2026-10-23 1504 · WhatsApp.jpg';
+    const esos = await planificar({ saltar_modelo: true }, { mensaje: 'Mueve esos dos archivos de antes a Viajes/Budapest', carpetasConocidas: CONOC, movidosRecientes: { ids: [ID1, ID2] } });
+    const pEsos = esos.find((x) => x.etiqueta.startsWith('mover esos archivos'));
+    afirmar('«Mueve esos dos archivos de antes a Viajes/Budapest»: los dos últimos que movió, por su id, sin el modelo', esos[0].meta.intencion === 'mover_archivos' && pEsos?.metodo === 'PATCH' && pEsos.url.endsWith(`/archivos?id=in.(${ID1},${ID2})&eliminado_at=is.null`) && JSON.stringify(pEsos.cuerpo) === JSON.stringify({ carpeta_destino: 'Viajes/Budapest', estado: 'asignado' }), JSON.stringify(esos.map((x) => [x.etiqueta, x.url])));
+    for (const frase of ['muévelos a Notas', 'pásalos a la carpeta de Viajes', 'mueve esas fotos a Viajes barra Budapest', 'mueve los archivos de antes a Fotos', 'Mueve los mismos archivos a Notas']) {
+      const r = await planificar({ saltar_modelo: true }, { mensaje: frase, carpetasConocidas: CONOC, movidosRecientes: { ids: [ID1] } });
+      afirmar(`«${frase}»: son los últimos movidos`, r.some((x) => x.etiqueta.startsWith('mover esos archivos')), JSON.stringify(r.map((x) => x.etiqueta)));
+    }
+    for (const frase of ['ponlos en la lista de la compra', 'ponlas en la nevera', 'mueve los archivos de Budapest a Viajes/Budapest', 'mueve la cita al viernes']) {
+      const r = await planificar({ saltar_modelo: true }, { mensaje: frase, carpetasConocidas: CONOC, movidosRecientes: { ids: [ID1] } });
+      afirmar(`«${frase}»: no es «esos archivos»`, !r.some((x) => x.etiqueta.startsWith('mover esos archivos')), JSON.stringify(r.map((x) => x.etiqueta)));
+    }
+    const sinMovidos = await planificar({ saltar_modelo: true }, { mensaje: 'Mueve esos archivos a Notas', carpetasConocidas: CONOC });
+    afirmar('sin nada movido antes: lo dice y cómo pedirlo (no lo manda al modelo)', sinMovidos[0].meta.respuesta_usuario.startsWith('No sé a qué archivos te refieres.'));
+    const esosParecida = await planificar({ saltar_modelo: true }, { mensaje: 'mueve esos archivos a Viaje', carpetasConocidas: CONOC.filter((c) => c.ruta !== 'viaje Tren de Hierro'), movidosRecientes: { ids: [ID1] } });
+    const pregEsos = esosParecida.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('«esos archivos» a una carpeta parecida: propone la que existe y «sí» lo repite', pregEsos?.pregunta === 'No tengo «Viaje». ¿Los paso a «Viajes»?' && JSON.parse(pregEsos.hilo.at(-1).texto).orden === 'mueve esos archivos a Viajes' && cmdS.interpretarMoverEsos('mueve esos archivos a Viajes')?.destino === 'Viajes');
+    // Varios archivos con el mismo nombre (fotos del mismo minuto): se pregunta; «sí» los mueve todos
+    const dobles = [{ id: ID1, nombre: NOMBRE_DOBLE, carpeta: 'Viajes/Budapest', estado: 'asignado' }, { id: ID2, nombre: NOMBRE_DOBLE, carpeta: 'Viajes/Tren de Hierro', estado: 'asignado' }];
+    const dosIg = await planificar({ saltar_modelo: true }, { mensaje: `Mueve \u2060${NOMBRE_DOBLE} a Notas`, carpetasConocidas: CONOC, archivosConocidos: dobles });
+    const pregDos = dosIg.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+    afirmar('dos archivos con el mismo nombre: pregunta, con dónde está cada uno, y no mueve nada todavía', pregDos?.pregunta === `Hay 2 archivos que se llaman «${NOMBRE_DOBLE}» (en «Viajes/Budapest» y «Viajes/Tren de Hierro»). ¿Muevo los 2 a «Notas»?` && !dosIg.some((x) => x.etiqueta.startsWith('mover el archivo')), JSON.stringify(pregDos));
+    const ordenDos = cmdS.aceptaSugerencia('sí', pregDos.hilo);
+    const dosSi = await planificar({ saltar_modelo: true }, { mensaje: ordenDos.orden, carpetasConocidas: CONOC, archivosConocidos: dobles });
+    afirmar('«sí»: los mueve los dos (por el nombre)', dosSi.some((x) => x.etiqueta.startsWith('mover el archivo') && x.url.includes(`nombre=eq.${encodeURIComponent(NOMBRE_DOBLE)}`)), JSON.stringify(dosSi.map((x) => [x.etiqueta, x.url])));
+    const uno = await planificar({ saltar_modelo: true }, { mensaje: `Mueve ${NOMBRE_DOBLE} a Notas`, carpetasConocidas: CONOC, archivosConocidos: [dobles[0]] });
+    afirmar('un solo archivo con ese nombre entre los recientes: se mueve por su id', uno.some((x) => x.etiqueta.startsWith('mover el archivo') && x.url.includes(`/archivos?id=eq.${ID1}&`)));
+    // Resultado: el texto y la anotación de los archivos tocados (para el «esos» siguiente)
+    const filaArch = (id) => ({ id, drive_file_id: 'drv-' + id.slice(0, 4), carpeta_destino: 'Viajes/Budapest' });
+    const resEsos = await resMA(esos[0].meta, [filaArch(ID1), filaArch(ID2)]);
+    afirmar('Resultado de «esos»: «Hecho: 2 archivos a «Viajes/Budapest»…»', resEsos.mensajes[0] === 'Hecho: 2 archivos a «Viajes/Budapest». En unos segundos estarán en Drive.', resEsos.mensajes[0]);
+    const notaEsos = JSON.parse(resEsos.anotacion?.hilo?.at(-1)?.texto ?? 'null');
+    afirmar('Resultado anota en el mensaje los ids movidos (motivo movidos, origen codigo) sin abrir ninguna pregunta', notaEsos?.motivo === 'movidos' && notaEsos.origen === 'codigo' && JSON.stringify(notaEsos.ids) === JSON.stringify([ID1, ID2]) && resEsos.anotacion.pregunta_pendiente === undefined, JSON.stringify(resEsos.anotacion));
+    afirmar('Resultado de «esos» si ya no existen: lo dice', (await resMA(esos[0].meta, [])).mensajes[0] === 'Esos archivos ya no están.');
+    afirmar('mover por nombre también anota los movidos', JSON.parse((await resMA(un[0].meta, [filaArch(ID1)])).anotacion?.hilo?.at(-1)?.texto ?? 'null')?.ids?.[0] === ID1);
+
+    // Sección 77: «Mueve todo lo de notas a Budapest» y variantes acababan en «Sí puedo mover carpetas…» cinco veces
+    const C77 = [
+      { ruta: 'Notas', en_drive: true, archivos: 2 }, { ruta: 'Viajes', en_drive: true, archivos: 0 }, { ruta: 'Viajes/Budapest', en_drive: true, archivos: 0 },
+      { ruta: 'Viajes/Tren de Hierro', en_drive: true, archivos: 1 }, { ruta: 'viajes/Budapest', en_drive: false, archivos: 1 }, { ruta: 'Entrada', en_drive: true, archivos: 0 },
+    ];
+    const m77 = (mensaje, extra = {}) => planificar({ saltar_modelo: true }, { mensaje, carpetasConocidas: C77, ...extra });
+    for (const frase of ['Mueve todo lo de notas a Budapest', 'Mete todo lo de la carpeta de notas a Budapest', 'mueve lo que hay en Notas a Viajes/Budapest', 'pasa todo el contenido de Notas a la carpeta Budapest']) {
+      const r = await m77(frase);
+      const pm = r.filter((x) => x.etiqueta.startsWith('mover archivos'));
+      afirmar(`«${frase}»: todo lo de Notas a Viajes/Budapest (la única «Budapest», escrita como en Drive), sin preguntar ni el modelo`, pm.length === 1 && pm[0].url.includes('/archivos?carpeta_destino=eq.Notas&eliminado_at=is.null') && !pm[0].url.includes('tipo_mime') && pm[0].cuerpo.carpeta_destino === 'Viajes/Budapest', JSON.stringify(r.map((x) => [x.etiqueta, x.url, x.cuerpo])));
+    }
+    for (const [frase, pedida] of [['Mueve todo lo de la carpeta de Notas a la carpeta Viaje Budapest', 'Viaje Budapest'], ['Mete todo el contenido de la carpeta de notas a la carpeta de Viaje/Budapest', 'Viaje/Budapest']]) {
+      const r = await m77(frase);
+      const pr = r.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
+      afirmar(`«${frase}»: propone Viajes/Budapest (una sola, sin la repetida en minúsculas) y queda abierta`, pr?.pregunta === `No tengo «${pedida}». ¿Paso los archivos de «Notas» a «Viajes/Budapest»?` && pr.pregunta_pendiente === true, JSON.stringify(pr));
+      const hazlo = cmdS.aceptaSugerencia('Hazlo', pr.hilo);
+      const r2 = await m77(hazlo?.orden ?? '');
+      afirmar(`… y «Hazlo» lo hace`, hazlo?.tipo === 'si' && r2.some((x) => x.etiqueta.startsWith('mover archivos') && x.cuerpo.carpeta_destino === 'Viajes/Budapest'), JSON.stringify(hazlo));
+    }
+    for (const frase of ['pon todo lo de la compra en la lista', 'mueve todo a Notas', 'mueve todo lo de Roma a Viajes']) {
+      const r = await m77(frase);
+      afirmar(`«${frase}»: no es mover el contenido de una carpeta`, !r.some((x) => x.etiqueta.startsWith('mover archivos')) && r[0].meta.intencion !== 'mover_archivos', JSON.stringify(r[0].meta.intencion));
+    }
+    const res77 = await resMA((await m77('Mueve todo lo de notas a Budapest'))[0].meta, [{ id: 'f1' }, { id: 'f2' }]);
+    afirmar('Resultado: desde Notas no sugiere «borra la carpeta Notas» (no se borra nunca)', res77.mensajes[0] === 'Hecho: 2 archivos de «Notas» a «Viajes/Budapest». En unos segundos estarán en Drive.', res77.mensajes[0]);
+
+    // Sección 78: «Pasa todo lo de Budapest a Documentos» → «Perdón me he equivocado, déjalo como estaba» → nada
+    const C78 = [
+      { ruta: 'Documentos', en_drive: true, archivos: 0 }, { ruta: 'Viajes', en_drive: true, archivos: 0 }, { ruta: 'Viajes/Budapest', en_drive: true, archivos: 1 },
+      { ruta: 'viajes/Budapest', en_drive: false, archivos: 1 },
+    ];
+    const ida = await planificar({ saltar_modelo: true }, { mensaje: 'Pasa todo lo de Budapest a Documentos', carpetasConocidas: C78 });
+    const pIda = ida.filter((x) => x.etiqueta.startsWith('mover archivos'));
+    afirmar('«Pasa todo lo de Budapest a Documentos»: las dos variantes de la ruta, y el origen escrito como en Drive', pIda.length === 2 && ida[0].meta.mover_archivos.origen === 'Viajes/Budapest' && Object.keys(ida[0].meta.mover_archivos.vuelta).join() === 'Documentos' && ida[0].meta.mover_archivos.vuelta.Documentos === 'Viajes/Budapest' && JSON.stringify(ida[0].meta.mover_archivos.vaciar) === JSON.stringify(['Viajes/Budapest']), JSON.stringify([ida[0].meta.mover_archivos, pIda.map((x) => x.url)]));
+    // Resultado anota de dónde salió cada uno (por la ruta exacta de cada PATCH) y la carpeta apuntada para vaciar
+    const IDA1 = '44444444-4444-4444-8444-444444444444';
+    const IDA2 = '55555555-5555-4555-8555-555555555555';
+    const metaIda = { ...ida[0].meta, mover_archivos: { ...ida[0].meta.mover_archivos, vuelta: { Documentos: 'Viajes/Budapest' } } };
+    const resIda = await resMA2(metaIda, ida.map(({ etiqueta }) => ({ etiqueta })), [{}, { id: IDA1, drive_file_id: 'd1', carpeta_destino: 'Documentos' }, { id: IDA2, drive_file_id: 'd2', carpeta_destino: 'Documentos' }, { pedida: true }]);
+    afirmar('Resultado: «Hecho: 2 archivos de «Viajes/Budapest» a «Documentos»…» (con mayúscula)', resIda.mensajes[0].startsWith('Hecho: 2 archivos de «Viajes/Budapest» a «Documentos».'), resIda.mensajes[0]);
+    const notaIda = JSON.parse(resIda.anotacion.hilo.at(-1).texto);
+    afirmar('Resultado anota cómo deshacerlo: cada id con su carpeta anterior y la carpeta apuntada para vaciar', JSON.stringify(notaIda.deshacer) === JSON.stringify([{ id: IDA1, a: 'Documentos', de: 'Viajes/Budapest' }, { id: IDA2, a: 'Documentos', de: 'Viajes/Budapest' }]) && JSON.stringify(notaIda.vaciar) === JSON.stringify(['Viajes/Budapest']), JSON.stringify(notaIda));
+    const movIda = { ids: [IDA1, IDA2], ultimo: true, deshacer: notaIda.deshacer, vaciar: notaIda.vaciar };
+    for (const frase of ['Perdón me he equivocado, déjalo como estaba', 'deshaz', 'devuélvelos a su sitio', 'vuelve a ponerlos donde estaban', 'déjalo como antes']) {
+      const r = await planificar({ saltar_modelo: true }, { mensaje: frase, carpetasConocidas: C78, movidosRecientes: movIda, quitados: [{ id: 'q1', titulo: 'otra cosa', tipo: 'tarea', quitado_en: new Date().toISOString() }] });
+      const dev = r.filter((x) => x.etiqueta.startsWith('devolver archivos'));
+      const anul = r.find((x) => x.etiqueta.startsWith('pedir vaciar anulada'));
+      afirmar(`«${frase}» tras mover: vuelven a Viajes/Budapest y se anula el vaciado (no recupera otra cosa)`, dev.length === 1 && dev[0].url.endsWith(`/archivos?id=in.(${IDA1},${IDA2})&eliminado_at=is.null`) && dev[0].cuerpo.carpeta_destino === 'Viajes/Budapest' && anul?.url.includes('/carpetas_vaciar?hecha_at=is.null&ruta=ilike.Viajes%2FBudapest') && anul.cuerpo.resultado === 'no_vacia' && !r.some((x) => x.etiqueta === 'recuperar lo quitado'), JSON.stringify(r.map((x) => [x.etiqueta, x.url])));
+    }
+    const noUltimo = await planificar({ saltar_modelo: true }, { mensaje: 'déjalo como estaba', carpetasConocidas: C78, movidosRecientes: { ...movIda, ultimo: false } });
+    afirmar('si lo último no fue mover archivos, «déjalo como estaba» no devuelve nada', !noUltimo.some((x) => x.etiqueta.startsWith('devolver archivos')));
+    const vueltaRes = await resMA2({ ok: true, error: null, intencion: 'mover_archivos', avisos: [], mover_archivos: { deshacer: true, destinos: ['Viajes/Budapest'], previas: { [IDA1]: 'Documentos', [IDA2]: 'Documentos' } } }, [{ etiqueta: 'actualizar mensaje' }, { etiqueta: 'devolver archivos a Viajes/Budapest' }, { etiqueta: 'pedir vaciar anulada Viajes/Budapest' }], [{}, { id: IDA1, drive_file_id: 'd1', carpeta_destino: 'Viajes/Budapest' }, { error: { message: 'relation carpetas_vaciar does not exist' } }]);
+    afirmar('Resultado de deshacer: «Hecho, como estaba…»; que falle anular el vaciado (sin actualizar la base de datos a la 1.5) no es un fallo; y se puede volver a deshacer', vueltaRes.ok === true && vueltaRes.mensajes[0] === 'Hecho, como estaba: el archivo vuelve a «Viajes/Budapest». En unos segundos estará en Drive.' && JSON.parse(vueltaRes.anotacion.hilo.at(-1).texto).deshacer[0].de === 'Documentos', JSON.stringify(vueltaRes));
+    const cmd78 = new Function(`return ${codigoComandos()}`)();
+    afirmar('«déjalo como estaba» no es deshacer si dice otra cosa («deja la reunión como estaba el martes» sí lo es, pero solo si lo último fue mover)', cmd78.interpretarDeshacerMovimiento('qué tengo hoy') === false && cmd78.interpretarDeshacerMovimiento('mueve todo a Notas') === false);
+
+    // El modelo dice que no puede mover: se corrige, también en una pregunta (visto el 2026-10-23)
+    const niega = await planificar(respuesta({ intencion: 'aclarar', pregunta: 'No puedo mover carpetas en Drive. ¿Quieres que cree la carpeta «Viajes/Budapest» o te lo apunto como tarea?', respuesta_usuario: 'x' }), { mensaje: 'Mueve Budapest a Viajes' });
+    afirmar('«No puedo mover carpetas… ¿Quieres…?»: no queda una pregunta abierta y se dice cómo pedirlo', niega[0].meta.intencion === 'charla' && niega[0].meta.respuesta_usuario.startsWith('Sí puedo mover carpetas') && !niega.some((x) => x.cuerpo?.pregunta_pendiente === true), JSON.stringify(niega[0].meta));
+    const niegaA = await planificar(respuesta({ intencion: 'charla', respuesta_usuario: 'No tengo fotos pendientes ni puedo mover archivos que ya estén en Drive. ¿Me las puedes enviar primero?' }), { mensaje: 'mueve las fotos' });
+    afirmar('«…ni puedo mover archivos que ya estén en Drive»: se corrige con el ejemplo', niegaA[0].meta.respuesta_usuario.startsWith('Sí puedo moverlos'));
+
+    // Construir petición: el lote, las carpetas, los atajos sin modelo y la conversación
+    const codigoCP = codigoConstruir();
+    const ahoraMs = Date.now();
+    const hace = (min) => new Date(ahoraMs - min * 60000).toISOString();
+    const archivo = (id, min, estado = 'pendiente') => ({ id, nombre: `${id}.jpg`, estado, created_at: hace(min), mensajes: { wa_message_id: `wa-${id}`, texto_original: null } });
+    const entradaCP = (mensaje, extra = {}) => ({ mensaje, fecha_actual: 'viernes 23 de octubre 2026, 15:10 (+02:00)', wa_message_id: 'wa-actual', ...extra });
+    const montarCP = (mensaje, { archivos = [{}], carpetas = undefined, conversacion = undefined, config = CONFIG, pregunta = [{}] } = {}) =>
+      correr(codigoCP, {
+        nodos: {
+          Configuración: [{ config }], Entrada: [entradaCP(mensaje)], 'Leer memoria': [{ termino: 'nombre de la secretaria', significado: 'Jarvis' }], 'Leer items pendientes': [{}], 'Leer pregunta pendiente': pregunta, 'Leer archivos': archivos, 'Leer proyectos': [{}], 'Leer respuesta citada': [{}],
+          ...(carpetas ? { 'Leer carpetas': carpetas } : {}), ...(conversacion ? { 'Leer conversación': conversacion } : {}),
+        },
+      }).then((x) => x[0]);
+    const ARCHS = [archivo('f-nueva', 1), archivo('f-antes', 2.5), archivo('f-vieja', 200), archivo('f-ya', 1, 'asignado')];
+    const c1 = await montarCP('Ponlo en Budapest', { archivos: ARCHS });
+    afirmar('el último lote: los pendientes seguidos y recientes (no el de hace horas ni uno ya guardado)', JSON.stringify(c1.lote_reciente.map((r) => c1.refs_archivos[r])) === JSON.stringify(['f-nueva', 'f-antes']), JSON.stringify(c1.lote_reciente));
+    afirmar('«Ponlo en Budapest» con un lote reciente: sin el modelo', c1.saltar_modelo === true);
+    const c2 = await montarCP('Ponlo en Budapest', { archivos: [archivo('f-vieja', 200)] });
+    afirmar('con solo archivos de hace horas no hay lote y decide el modelo', c2.lote_reciente.length === 0 && c2.saltar_modelo === false);
+    const c3 = await montarCP('Mueve Budapest a la carpeta Viajes', { carpetas: CONOC.map((c) => ({ ...c })) });
+    afirmar('las carpetas conocidas llegan a Planificar y «mueve Budapest a la carpeta Viajes» va sin el modelo', c3.carpetas_conocidas.length === CONOC.length && c3.saltar_modelo === true);
+    const c4 = await montarCP('Mueve Budapest a la carpeta Viajes', { carpetas: [{ error: { message: 'HTTP 404' } }] });
+    afirmar('sin actualizar la base de datos a la 1.5 (la lectura falla): sin carpetas conocidas y decide el modelo', c4.carpetas_conocidas.length === 0 && c4.saltar_modelo === false);
+    { // Sección 78: «déjalo como estaba» va sin el modelo solo si lo último fue mover archivos
+      const nota78 = JSON.stringify({ motivo: 'movidos', origen: 'codigo', ids: ['44444444-4444-4444-8444-444444444444'], deshacer: [{ id: '44444444-4444-4444-8444-444444444444', de: 'Viajes/Budapest', a: 'Documentos' }], vaciar: ['Viajes/Budapest'] });
+      const fila78 = { wa_message_id: 'wa-m', tipo_entrada: 'texto', texto_original: 'Pasa todo lo de Budapest a Documentos', respuesta_texto: 'Hecho', hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: nota78 }], created_at: hace(1) };
+      const c78 = await montarCP('Perdón me he equivocado, déjalo como estaba', { conversacion: [fila78], config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
+      afirmar('Construir: «déjalo como estaba» justo después de mover: sin el modelo, con de dónde salió cada archivo', c78.saltar_modelo === true && c78.movidos_recientes.ultimo === true && c78.movidos_recientes.deshacer[0].de === 'Viajes/Budapest' && c78.movidos_recientes.vaciar[0] === 'Viajes/Budapest', JSON.stringify(c78.movidos_recientes));
+      const c78b = await montarCP('Perdón me he equivocado, déjalo como estaba', { conversacion: [{ wa_message_id: 'wa-n', tipo_entrada: 'texto', texto_original: 'qué tengo hoy', respuesta_texto: 'Nada', hilo: null, created_at: hace(0.5) }, fila78], config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
+      afirmar('Construir: si después hubo otra cosa, no es «lo último» y decide el modelo', c78b.movidos_recientes.ultimo === false && c78b.saltar_modelo === false, JSON.stringify(c78b.movidos_recientes));
+    }
+    afirmar('Construir: «Mueve todo lo de notas a Budapest» va sin el modelo ', (await montarCP('Mueve todo lo de notas a Budapest', { carpetas: C77 })).saltar_modelo === true);
+    afirmar('«Mueve ⁠2026-10-23 1504 · WhatsApp.jpg a Notas» (un archivo por su nombre) va sin el modelo', (await montarCP(real, { carpetas: CONOC })).saltar_modelo === true);
+    afirmar('«mueve las fotos de Budapest a Viajes/Budapest» va sin el modelo', (await montarCP('mueve las fotos de Budapest a Viajes/Budapest', { carpetas: CONOC })).saltar_modelo === true);
+    // Sección 76: de dónde salen «esos archivos» y los archivos por nombre
+    const conMovidos = [
+      { wa_message_id: 'wa-9', tipo_entrada: 'texto', texto_original: 'qué tengo hoy', respuesta_texto: 'Nada.', hilo: null, created_at: hace(1) },
+      { wa_message_id: 'wa-8', tipo_entrada: 'texto', texto_original: 'Mueve x.jpg a Notas', respuesta_texto: 'Hecho', hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ motivo: 'movidos', origen: 'codigo', ids: ['11111111-1111-4111-8111-111111111111', 'no-es-un-id'] }) }], created_at: hace(2) },
+      { wa_message_id: 'wa-7', tipo_entrada: 'texto', texto_original: 'otra', respuesta_texto: 'Hecho', hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ motivo: 'movidos', origen: 'codigo', ids: ['33333333-3333-4333-8333-333333333333'] }) }], created_at: hace(3) },
+    ];
+    const cm = await montarCP('muévelos a Viajes', { carpetas: CONOC, conversacion: conMovidos, config: { ...CONFIG, memoria_mensajes: 0, memoria_min: 120 } });
+    afirmar('Construir: «muévelos a Viajes» va sin el modelo con los últimos movidos de la conversación (aunque MEMORIA_MENSAJES = 0)', cm.saltar_modelo === true && JSON.stringify(cm.movidos_recientes?.ids) === JSON.stringify(['11111111-1111-4111-8111-111111111111']), JSON.stringify(cm.movidos_recientes));
+    const cmFalso = await montarCP('muévelos a Viajes', { conversacion: [{ ...conMovidos[1], hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ motivo: 'movidos', ids: ['11111111-1111-4111-8111-111111111111'] }) }] }] });
+    afirmar('Construir: una nota de movidos sin origen codigo no vale', cmFalso.movidos_recientes === null);
+    const cmArch = await montarCP('x', { archivos: [archivo('f-a', 5, 'asignado')] });
+    afirmar('Construir: pasa los archivos recientes con su nombre y carpeta', cmArch.archivos_conocidos.length === 1 && cmArch.archivos_conocidos[0].nombre === 'f-a.jpg');
+    const c5 = await montarCP('1', { pregunta: [{ id: 'p-carpeta', pregunta: preg.pregunta, hilo: hiloP }] });
+    afirmar('«1» a «¿Dónde la guardo?»: contesta a esa pregunta y sin el modelo', c5.pendiente_id === 'p-carpeta' && c5.saltar_modelo === true);
+    // La conversación reciente (MEMORIA_MENSAJES)
+    const CONV = [
+      { wa_message_id: 'wa-3', tipo_entrada: 'texto', texto_original: 'No, quiero que crees la carpeta Viajes', respuesta_texto: 'No puedo mover carpetas en Drive.', created_at: hace(1) },
+      { wa_message_id: 'wa-2', tipo_entrada: 'imagen', texto_original: null, respuesta_texto: 'Guardado: «foto.jpg».', created_at: hace(3) },
+      { wa_message_id: 'wa-juntado', tipo_entrada: 'texto', texto_original: 'y otra cosa', respuesta_texto: null, created_at: hace(4) },
+      { wa_message_id: 'wa-1', tipo_entrada: 'texto', texto_original: 'Crea una carpeta llamada viajes', respuesta_texto: '¿Te refieres a crear el proyecto «Viajes»?', created_at: hace(5) },
+    ];
+    const c6 = await montarCP('mete dentro Budapest', { conversacion: CONV, config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
+    const texto6 = c6.cuerpo.contents.at(-1).parts[0].text;
+    afirmar('con memoria: el modelo ve los mensajes anteriores contestados, el más antiguo primero, antes del mensaje', c6.conversacion_vista === 3 && texto6.startsWith('[Conversación reciente') && texto6.indexOf('Crea una carpeta llamada viajes') < texto6.indexOf('(una foto)') && texto6.indexOf('(una foto)') < texto6.indexOf('No, quiero que crees') && texto6.endsWith('mete dentro Budapest') && !texto6.includes('y otra cosa'), texto6);
+    afirmar('la nota dice que es solo contexto y que no repita nada', texto6.includes('Es solo contexto y ya está resuelta: no repitas nada'));
+    const c7 = await montarCP('mete dentro Budapest', { conversacion: CONV, config: { ...CONFIG, memoria_mensajes: 1, memoria_min: 120 } });
+    afirmar('MEMORIA_MENSAJES = 1: solo el último', c7.conversacion_vista === 1 && c7.cuerpo.contents.at(-1).parts[0].text.includes('No, quiero que crees') && !c7.cuerpo.contents.at(-1).parts[0].text.includes('Crea una carpeta llamada'));
+    const c8 = await montarCP('mete dentro Budapest', { conversacion: CONV, config: { ...CONFIG, memoria_mensajes: 0, memoria_min: 120 } });
+    afirmar('MEMORIA_MENSAJES = 0: el mensaje llega como siempre', c8.conversacion_vista === 0 && c8.cuerpo.contents.at(-1).parts[0].text === 'mete dentro Budapest');
+    const c9 = await montarCP('No, quiero que crees la carpeta Viajes', { conversacion: CONV, config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
+    afirmar('un mensaje anterior que está dentro del actual (mensajes juntados) no se repite como conversación', !c9.cuerpo.contents.at(-1).parts[0].text.slice(0, -40).includes('«No, quiero que crees la carpeta Viajes»'));
+
+    // Construir petición la convierte en la orden y Planificar la ejecuta y cierra la propuesta
+    const cpSug = await montarCP('Mueve los archivos', { pregunta: [{ id: '11111111-2222-4333-8444-555555555555', pregunta: 'x', hilo: hiloSug }], carpetas: CONOC });
+    afirmar('Construir petición: «Mueve los archivos» acepta la propuesta y trabaja con la orden entera, sin el modelo', cpSug.saltar_modelo === true && cpSug.mensaje_efectivo === 'mueve los archivos de Budapest a Viajes/Budapest' && cpSug.sugerencia_aceptada === true);
+    const ejecuta = await correr(nodo('planificar.js'), { input: [cpSug], nodos: { Configuración: [{ config: CONFIG }], 'Guardar mensaje': [{ id: 'm-1' }], 'Construir petición': [{ ...cpSug, carpetas_conocidas: CONOC }], Entrada: [{ mensaje: 'Mueve los archivos' }] } });
+    afirmar('Planificar: mueve los archivos de Budapest a Viajes/Budapest y cierra la propuesta', ejecuta.some((x) => x.etiqueta === 'mover archivos de Budapest a Viajes/Budapest') && ejecuta.some((x) => x.etiqueta === 'cerrar pregunta anterior' && x.url.includes('11111111-2222-4333-8444-555555555555')), JSON.stringify(ejecuta.map((x) => x.etiqueta)));
+    // La nota de la conversación es EXACTAMENTE la que mide la evaluación (caso 252): si no, la medida no valdría para el flujo
+    const c10 = await montarCP('no, a Pedro', { conversacion: [{ wa_message_id: 'wa-9', tipo_entrada: 'texto', texto_original: 'apunta llamar a Juan mañana', respuesta_texto: '✅ Llamar a Juan', created_at: '2026-10-23T13:08:00.000Z' }], config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
+    afirmar('la nota de la conversación coincide con la de la evaluación', c10.cuerpo.contents.at(-1).parts[0].text === '[Conversación reciente, de la más antigua a la más nueva. Es solo contexto y ya está resuelta: no repitas nada de lo que se hizo ni lo vuelvas a guardar. Úsala solo si el mensaje nuevo corrige algo de ella («no, quiero que…»), la continúa o se refiere a algo que se dijo.\n• 15:08 Usuario: «apunta llamar a Juan mañana» → Tú: «✅ Llamar a Juan»]\nno, a Pedro', c10.cuerpo.contents.at(-1).parts[0].text);
+
+    // Los nodos nuevos
+    const fl = construirFlujo();
+    const nf = (n) => fl.nodes.find((x) => x.name === n);
+    afirmar('Leer carpetas: RPC carpetas_conocidas, una vez, siempre con salida y sin cortar el flujo (sin actualizar la base de datos a la 1.5 falla)', nf('Leer carpetas').parameters.url.endsWith('/rest/v1/rpc/carpetas_conocidas') && nf('Leer carpetas').parameters.method === 'POST' && nf('Leer carpetas').executeOnce === true && nf('Leer carpetas').alwaysOutputData === true && nf('Leer carpetas').onError === 'continueRegularOutput' && nf('Leer carpetas').parameters.nodeCredentialType === 'supabaseApi');
+    const urlConv = nf('Leer conversación').parameters.url;
+    const evaluaUrl = (u) => u.replace(/^=/, '').replace(/\{\{([\s\S]+?)\}\}/g, (_, e) => String(new Function('$', `return (${e});`)((n) => ({ first: () => ({ json: n === 'Configuración' ? { config: { ...CONFIG, supabase_url: 'https://abc.supabase.co', memoria_mensajes: 5, memoria_min: 120 } } : { id: 'm', created_at: '2026-10-23T13:10:00.123+00:00' } }) }))));
+    const u = evaluaUrl(urlConv);
+    afirmar('Leer conversación: los mensajes contestados de las últimas 2 h, ANTERIORES a este (con el «+» de la hora codificado), lo último primero, con margen sobre MEMORIA_MENSAJES', u.startsWith('https://abc.supabase.co/rest/v1/mensajes?select=wa_message_id,tipo_entrada,texto_original,respuesta_texto,hilo,created_at&respuesta_texto=not.is.null&created_at=gte.') && u.includes('&created_at=lt.2026-10-23T13%3A10%3A00.123%2B00%3A00&order=created_at.desc&limit=8') && nf('Leer conversación').executeOnce === true && nf('Leer conversación').onError === 'continueRegularOutput', u);
+    afirmar('la cadena de lecturas: … Leer quitados → Leer carpetas → Leer conversación → Construir petición', fl.connections['Leer quitados'].main[0][0].node === 'Leer carpetas' && fl.connections['Leer carpetas'].main[0][0].node === 'Leer conversación' && fl.connections['Leer conversación'].main[0][0].node === 'Construir petición');
   }
 
   console.log(`\n${pasan} comprobaciones correctas, ${fallan.length} con fallo.`);

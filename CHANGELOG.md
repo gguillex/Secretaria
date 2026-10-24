@@ -2,6 +2,48 @@
 
 Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer para actualizar una instalación existente.
 
+## 1.5.0 · 2026-10-24
+
+### Novedades
+
+- **Mover archivos con tus palabras:** «mueve las fotos de Budapest a Viajes/Budapest», «mueve todo lo de Notas a Viajes», un archivo por
+  su nombre («mueve 2026-10-23 1504 · WhatsApp.jpg a Notas») o «mueve esos archivos» (los del último movimiento o guardado). Se reconoce
+  por código, sin el modelo, también por voz.
+- **La carpeta que se queda vacía va a la papelera** al mover todos sus archivos (solo si Drive confirma que no queda nada, ni lo subido a
+  mano). Nunca `Entrada` ni `Notas`.
+- **«Déjalo como estaba»:** justo después de mover archivos los devuelve a su carpeta y anula el vaciado.
+- **Propuestas con «sí»:** si dice «Ya hay una carpeta «Budapest» dentro de «Viajes». ¿Paso los archivos de «Budapest» a
+  «Viajes/Budapest»?», basta con «sí» o con repetir el principio de la orden («mueve los archivos»).
+- **No duplica carpetas:** al archivar o mover lee las carpetas que existen; si la pedida se parece a otra («viaje Roma» y
+  «Viajes/Roma»), pregunta en vez de crear una casi igual, y escribe la ruta tal como ya existe.
+- **Memoria de la conversación:** el modelo ve tus últimos mensajes (5, de las dos últimas horas) y lo que se te contestó, para entender
+  «no, quiero que…». Se ajusta con `MEMORIA_MENSAJES` y `MEMORIA_MIN` en la configuración del flujo principal (0 la apaga).
+- **Un solo aviso para varias fotos seguidas**, ahora activado (`ESPERA_ARCHIVOS_S = 4`; con 0 vuelve un aviso por archivo).
+- **Fotos con nombre único:** fecha, hora y un sufijo corto, para que dos del mismo minuto no se llamen igual.
+
+### Cambios
+
+- **Sincronizar Drive se ejecuta cada 10 segundos** (antes cada minuto): una carpeta pedida o una foto archivada se ve antes en Drive. Un
+  turno en la base de datos evita que dos ejecuciones creen la misma carpeta, y las ejecuciones correctas no se guardan en n8n (serían
+  más de 8.000 al día).
+- «Mueve todo lo de X a Y» ya no devuelve el mismo ejemplo fijo cuando no lo entiende; la respuesta a «¿puedes mover…?» es corta.
+- Arreglo: al vaciar una carpeta ya no llega un falso «♻️ Recuperaste el archivo… de la papelera».
+- «La carpeta de viajes» se entiende como «Viajes».
+
+### Para actualizar desde la 1.4
+
+**La base de datos cambia** (tres tablas y seis funciones), así que el orden importa:
+
+1. Haz una copia de n8n (parte 15 del manual).
+2. En el SQL Editor de Supabase, ejecuta [`supabase/actualizar-1.5.sql`](supabase/actualizar-1.5.sql) **una vez**. Después, ejecuta
+   `supabase/comprobar-instalacion.sql` (10 filas con `ok = true`) y `supabase/consultas/ver-version.sql` (debe decir 1.5).
+3. En el servidor: `git pull`, `bash herramientas/servidor/importar-flujos.sh` y vuelve a publicar los flujos (parte 11.5 del manual).
+   La base de datos va **antes** que los flujos: **sin el paso 2, «Sincronizar Drive» falla** (necesita la función del turno) y no se
+   crean carpetas ni se mueven archivos.
+
+Si vienes de la 1.3 o anterior, ejecuta antes, en orden, los `actualizar-1.X.sql` que te falten (`ver-version.sql` te dice cuál tienes).
+Las instalaciones nuevas usan `supabase/instalar.sql`, que ya incluye todo.
+
 ## 1.4.0 · 2026-10-23
 
 ### Novedades

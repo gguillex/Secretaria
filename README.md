@@ -2,7 +2,7 @@
 
 [![Pruebas](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml/badge.svg)](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml)
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-![Versión 1.4.0](https://img.shields.io/badge/versión-1.4.0-informational)
+![Versión 1.5.0](https://img.shields.io/badge/versión-1.5.0-informational)
 ![n8n 2.41.6](https://img.shields.io/badge/n8n-2.41.6-EA4B71)
 ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933)
 ![Gemini](https://img.shields.io/badge/IA-Gemini-4285F4)
@@ -34,7 +34,10 @@ Pensado para **una sola persona**: tú. Corre en un servidor pequeño propio, co
 - **Archivos:** los organiza en carpetas de Drive a petición («guárdala en Fotos/Viajes») y te los devuelve por WhatsApp. También
   borra carpetas y archivos («borra la carpeta Fotos/Viajes», «vacía la carpeta Facturas»): enseña la lista y solo los manda a la
   papelera de Drive (recuperable unos 30 días) si le dices que sí. Mueve carpetas dentro de otras («mete la carpeta Viajes dentro
-  de Fotos», también varias a la vez o creando el destino), y una foto con la ruta como pie de texto se archiva sin preguntar.
+  de Fotos», también varias a la vez o creando el destino) y mueve archivos ya guardados («mueve las fotos de Budapest a
+  Viajes/Budapest», «mueve todo lo de Notas a Viajes», un archivo por su nombre). La carpeta que se queda vacía va a la papelera
+  (nunca `Entrada` ni `Notas`), «déjalo como estaba» lo devuelve todo a su sitio y no crea una carpeta casi igual a otra que ya existe.
+  Una foto con la ruta como pie de texto se archiva sin preguntar, y varias fotos seguidas reciben un solo aviso.
 - **Memoria:** recuerda lo que le cuentas que dura («Emma es mi hermana», «vivo en Granada») y cómo quieres que te
   llame («llámame Ana»). `/memory` enseña lo que recuerda (hasta 50 datos) y `/forget 2` olvida el segundo; si se lo pides con palabras
   («olvida lo de Emma»), pregunta antes.
@@ -43,6 +46,8 @@ Pensado para **una sola persona**: tú. Corre en un servidor pequeño propio, co
 - **La compra:** lo que sea comprar va a la lista de la compra aunque digas un día, sin repetir lo que ya está.
 - **Charla breve:** a un saludo o un «gracias» contesta con naturalidad, sin guardar nada. Si ofrece apuntar algo («¿quieres que lo
   apunte como tarea?»), tu «sí» posterior sabe de qué hablabais.
+- **Entiende lo que acabas de decir:** ve tus últimos mensajes y lo que contestó, así que «no, quiero que…» se entiende; y si
+  propone algo («¿Paso los archivos de Budapest a Viajes/Budapest?»), basta con «sí» o con repetir la orden a medias.
 - **Contestar a una respuesta concreta:** si respondes citando cualquiera de sus mensajes (también con un audio), entiende a cuál
   te refieres.
 - **Órdenes con tus palabras, al momento:** «dame todo», «ver mis ideas», «dame la jerarquía» o «dame los proyectos» (también por

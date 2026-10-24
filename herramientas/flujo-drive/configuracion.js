@@ -17,8 +17,11 @@ const delEntorno = (clave, porDefecto) => {
 const SUPABASE_URL = delEntorno('SUPABASE_URL', 'https://TU-PROYECTO.supabase.co');
 // ID de la carpeta "Secretaria" de Drive: lo que hay en la URL al abrirla (drive.google.com/drive/folders/<ID>).
 const CARPETA_RAIZ_ID = delEntorno('DRIVE_CARPETA_RAIZ_ID', 'TU-CARPETA-RAIZ');
-// Máximo de archivos que se mueven en cada ejecución (cada minuto)
+// Máximo de archivos que se mueven en cada ejecución (cada 10 segundos)
 const LOTE = 20;
+// Cuánto dura, como mucho, el turno de una ejecución (base de datos 1.5): si una ejecución muere a medias, las siguientes esperan esto y siguen.
+// Una pasada normal tarda pocos segundos y suelta el turno al acabar.
+const TURNO_S = 60;
 // ==================================
 
 if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SUPABASE_URL) || SUPABASE_URL.includes('TU-PROYECTO')) {
@@ -28,6 +31,7 @@ if (!/^[A-Za-z0-9_-]{10,}$/.test(CARPETA_RAIZ_ID) || CARPETA_RAIZ_ID.includes('T
   throw new Error('Configuración: pon el ID de la carpeta "Secretaria" de Drive en CARPETA_RAIZ_ID (solo letras, números, guion y guion bajo). Va en el .env del servidor (DRIVE_CARPETA_RAIZ_ID=…, y después docker compose up -d)');
 }
 if (!Number.isInteger(LOTE) || LOTE <= 0) throw new Error('Configuración: LOTE debe ser un entero positivo');
+if (!Number.isInteger(TURNO_S) || TURNO_S < 5 || TURNO_S > 600) throw new Error('Configuración: TURNO_S debe ser un entero entre 5 y 600');
 
 return [
   {
@@ -36,6 +40,7 @@ return [
         supabase_url: SUPABASE_URL.replace(/\/+$/, ''),
         carpeta_raiz_id: CARPETA_RAIZ_ID,
         lote: LOTE,
+        turno_s: TURNO_S,
       },
     },
   },

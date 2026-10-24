@@ -252,6 +252,13 @@ async function main() {
     afirmar('una carpeta nueva de primer nivel se crea bajo la raíz', nueva.acciones.length === 1 && nueva.acciones[0].tipo === 'crear_carpeta' && JSON.stringify(nueva.acciones[0].cuerpo) === JSON.stringify({ name: 'Oficina', mimeType: 'application/vnd.google-apps.folder', parents: [RAIZ], appProperties: { secretaria: '1' } }));
     const dentro = planC([C(1, 'Fotos/Playa')]);
     afirmar('una carpeta dentro de otra existente se crea dentro de ella', dentro.acciones.length === 1 && dentro.acciones[0].cuerpo.name === 'Playa' && dentro.acciones[0].cuerpo.parents[0] === FOTOS);
+    // Carpetas recién creadas por la pasada anterior (base de datos 1.5): cuentan aunque Drive aún no las liste
+    const yaCreada = planC([C(1, 'Oficina')], { recientes: [{ drive_id: 'id-trabajo-recien', padre_id: RAIZ, nombre: 'oficina' }] });
+    afirmar('una carpeta creada hace un momento (aún no listada) no se vuelve a crear: se da por lista con su id', yaCreada.acciones.length === 1 && yaCreada.acciones[0].tipo === 'carpeta_lista' && yaCreada.acciones[0].carpeta_id === 'id-trabajo-recien', JSON.stringify(yaCreada.acciones.map((x) => x.tipo)));
+    const siguienteNivel = planC([C(1, 'Oficina/Proyectos')], { recientes: [{ drive_id: 'id-trabajo-recien', padre_id: RAIZ, nombre: 'Oficina' }] });
+    afirmar('y el nivel siguiente se crea dentro de ella sin esperar a que Drive la liste', siguienteNivel.acciones[0].tipo === 'crear_carpeta' && siguienteNivel.acciones[0].cuerpo.parents[0] === 'id-trabajo-recien' && siguienteNivel.acciones[0].cuerpo.name === 'Proyectos');
+    afirmar('una reciente que ya sale en el listado no se duplica', planC([C(1, 'Fotos')], { recientes: [{ drive_id: FOTOS, padre_id: RAIZ, nombre: 'Fotos' }] }).acciones[0].carpeta_id === FOTOS);
+    afirmar('filas raras en las recientes se ignoran', planC([C(1, 'Oficina')], { recientes: [null, { drive_id: 1 }, {}] }).acciones[0].tipo === 'crear_carpeta');
     const profunda = planC([C(1, 'A/B/C')]);
     afirmar('una ruta de tres niveles nueva empieza por el primero (un nivel por pasada)', profunda.acciones.length === 1 && profunda.acciones[0].cuerpo.name === 'A' && profunda.acciones[0].cuerpo.parents[0] === RAIZ);
     const unicaCreada = planC([C(1, 'Oficina/Proyectos'), C(2, 'oficina/Otros')]);
@@ -301,8 +308,8 @@ async function main() {
 
   console.log('Nodo "Preparar"');
   {
-    // Los archivos vienen de "Leer pendientes" y las carpetas pedidas, de la entrada (salida de "Leer carpetas pendientes")
-    const prep = (archivosFilas, carpetasFilas = [{}]) => correr(nodo('preparar.js'), { input: carpetasFilas, nodos: { 'Leer pendientes': archivosFilas } });
+    // Los archivos vienen de "Leer pendientes" y las carpetas pedidas, de "Leer carpetas pendientes" (los dos por su nombre: entre medias están el turno)
+    const prep = (archivosFilas, carpetasFilas = [{}]) => correr(nodo('preparar.js'), { input: [{ turno: true }], nodos: { 'Leer pendientes': archivosFilas, 'Leer carpetas pendientes': carpetasFilas } });
     afirmar('sin pendientes (item vacío) devuelve cero items y el flujo termina', (await prep([{}])).length === 0);
     afirmar('sin ningún item también', (await prep([], [])).length === 0);
     const dos = await prep([A_PEDIDA, A_NOTA]);
@@ -315,6 +322,11 @@ async function main() {
     const mixto = await prep([A_PEDIDA], [CARPETA]);
     afirmar('los archivos van antes que las carpetas (el orden de Leer padres)', mixto.length === 2 && mixto[0].archivo && mixto[1].carpeta);
     afirmar('descarta carpetas sin ruta o sin id', (await prep([{}], [{ id: CARPETA.id, ruta: '' }, { ruta: 'x' }])).length === 0);
+
+    // «Hay trabajo»: un solo item si hay algo pendiente (para pedir el turno una vez), ninguno si no
+    const hay = (archivosFilas, carpetasFilas = [{}]) => correr(construirFlujo().nodes.find((x) => x.name === 'Hay trabajo').parameters.jsCode, { input: [{}], nodos: { 'Leer pendientes': archivosFilas, 'Leer carpetas pendientes': carpetasFilas } });
+    afirmar('Hay trabajo: sin nada pendiente, cero items (el flujo acaba sin pedir el turno)', (await hay([{}])).length === 0 && (await hay([], [])).length === 0);
+    afirmar('Hay trabajo: con varios archivos y una carpeta pedida, un solo item', (await hay([A_NOTA, A_NOTA], [CARPETA])).length === 1 && (await hay([{}], [CARPETA])).length === 1);
   }
 
   console.log('Nodo "Planificar"');
@@ -368,13 +380,16 @@ async function main() {
     afirmar('renombrar tampoco toca carpeta_id: solo limpia la marca', JSON.stringify(rn[0].cuerpo) === '{"drive_pendiente":false}');
 
     const c = await correr(codigo, { input: [{ statusCode: 200, body: { id: 'nueva' } }], nodos: nodos([accionCrear]) });
-    afirmar('crear una carpeta no escribe nada en Supabase', c.length === 0);
+    afirmar('crear una carpeta no anota nada: solo una escritura que no toca ninguna fila (así se suelta el turno)', c.length === 1 && c[0].etiqueta === 'nada que anotar' && c[0].url === `${BASE}/carpetas_pedidas?id=eq.00000000-0000-0000-0000-000000000000` && c[0].metodo === 'PATCH');
 
+    const crearConCuerpo = { tipo: 'crear_carpeta', etiqueta: 'crear Trabajo', cuerpo: { name: 'Trabajo', parents: [RAIZ] } };
+    const cc = await correr(codigo, { input: [{ statusCode: 200, body: { id: 'id-nueva-12345' } }], nodos: nodos([crearConCuerpo]) });
+    afirmar('crear una carpeta la anota en carpetas_creadas (base de datos 1.5) con su id, su padre y su nombre', cc.length === 1 && cc[0].metodo === 'POST' && cc[0].url === `${BASE}/carpetas_creadas?on_conflict=drive_id` && JSON.stringify(cc[0].cuerpo) === JSON.stringify({ drive_id: 'id-nueva-12345', padre_id: RAIZ, nombre: 'Trabajo' }) && cc[0].prefer === 'resolution=merge-duplicates,return=minimal', JSON.stringify(cc));
     const mezcla = await correr(codigo, { input: [{ statusCode: 200, body: {} }, { statusCode: 500, body: 'x' }], nodos: nodos([accionMover, accionLimpiar]) });
     afirmar('un fallo aislado no impide anotar lo que sí se hizo', mezcla.length === 1 && mezcla[0].etiqueta === 'mover x');
     await lanza('si no se hace nada es un error', correr(codigo, { input: [{ statusCode: 403, body: { error: 'x' } }], nodos: nodos([accionMover]) }), 'nada hecho');
     const soloCrear = await correr(codigo, { input: [{ statusCode: 200, body: {} }, { statusCode: 500, body: 'x' }], nodos: nodos([accionCrear, accionMover]) });
-    afirmar('crear una carpeta cuenta como algo hecho (no lanza error)', soloCrear.length === 0);
+    afirmar('crear una carpeta cuenta como algo hecho (no lanza error)', soloCrear.length === 1 && soloCrear[0].etiqueta === 'nada que anotar');
     const red = await correr(codigo, { input: [{ statusCode: 200, body: {} }, { error: { message: 'ECONNRESET' } }], nodos: nodos([accionLimpiar, accionMover]) });
     afirmar('un error de red se trata como fallo', red.length === 1);
 
@@ -393,15 +408,51 @@ async function main() {
     const flujo = construirFlujo();
     const por = (n) => flujo.nodes.find((x) => x.name === n);
     const trabajo = flujo.nodes.filter((x) => x.type !== 'n8n-nodes-base.stickyNote');
-    afirmar('14 nodos de trabajo', trabajo.length === 14, String(trabajo.length));
+    afirmar('25 nodos de trabajo', trabajo.length === 25, String(trabajo.length));
     afirmar('nombres de nodo únicos', new Set(flujo.nodes.map((x) => x.name)).size === flujo.nodes.length);
     afirmar('ids de nodo únicos', new Set(flujo.nodes.map((x) => x.id)).size === flujo.nodes.length);
     afirmar('zona Europe/Madrid', flujo.settings.timezone === 'Europe/Madrid');
     afirmar('todas las conexiones apuntan a nodos que existen', Object.entries(flujo.connections).every(([origen, c]) => por(origen) && c.main.flat().every((d) => por(d.node))));
-    const cadena = ['Configuración', 'Leer pendientes', 'Leer carpetas pendientes', 'Preparar', 'Leer padres', 'Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3', 'Planificar', 'Google Drive', 'Registrar', 'Escribir en Supabase'];
+    const cadena = ['Configuración', 'Leer pendientes', 'Leer carpetas pendientes', 'Hay trabajo', 'Tomar turno', '¿Tengo turno?', 'Preparar', 'Leer padres', 'Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3', 'Leer carpetas creadas', 'Planificar', 'Google Drive', 'Registrar', 'Escribir en Supabase', 'Soltar turno'];
     afirmar('la cadena de nodos está completa y en orden', cadena.slice(0, -1).every((n, i) => flujo.connections[n]?.main[0][0].node === cadena[i + 1]));
+    {
+      // Vaciar carpetas (base de datos 1.5)
+      const vac = ['Leer carpetas por vaciar', 'Preparar vaciado', 'Mirar si está vacía', 'Decidir vaciado', 'Vaciar en Drive', 'Anotar vaciado'];
+      afirmar('Configuración arranca las dos ramas: la de siempre y la de vaciar carpetas', flujo.connections['Configuración'].main[0].map((x) => x.node).join() === 'Leer pendientes,Leer carpetas por vaciar');
+      afirmar('la rama de vaciar está completa y en orden', vac.slice(0, -1).every((n, i) => flujo.connections[n]?.main[0][0].node === vac[i + 1]));
+      const lcc = por('Leer carpetas creadas');
+      afirmar('Leer carpetas creadas: una vez, siempre con salida y sin cortar el flujo (sin actualizar la base de datos a la 1.5 falla)', lcc.executeOnce === true && lcc.alwaysOutputData === true && lcc.onError === 'continueRegularOutput' && lcc.parameters.url.includes('/rest/v1/carpetas_creadas?select=drive_id,padre_id,nombre&creada_at=gte.'));
+      const prep = (filas) => correr(nodo('preparar-vaciado.js'), { input: filas });
+      const F = (ruta, extra = {}) => ({ id: 'aaaaaaaa-0000-4000-8000-000000000001', carpeta_id: 'carpeta-vaciar-01', ruta, ...extra });
+      afirmar('Preparar vaciado: una carpeta normal pasa', (await prep([F('Budapest')])).length === 1);
+      for (const r of ['Entrada', 'notas', '']) afirmar(`Preparar vaciado: «${r}» NUNCA se vacía (tercera barrera)`, (await prep([F(r)])).length === 0);
+      afirmar('Preparar vaciado: sin actualizar la base de datos a la 1.5 (un error) o con ids raros, nada', (await prep([{ error: { message: 'x' } }, F('X', { carpeta_id: "a' or 1=1" }), F('X', { id: 'no' })])).length === 0);
+      const decidir = (listados, preps = [{ vaciar: F('Budapest').valueOf() }]) => correr(nodo('decidir-vaciado.js'), { input: listados, nodos: { 'Preparar vaciado': preps.map((x) => (x.vaciar ? x : { vaciar: x })) } });
+      afirmar('Decidir vaciado: vacía en Drive → a la papelera', (await decidir([{ statusCode: 200, body: { files: [] } }])).length === 1);
+      afirmar('Decidir vaciado: con algo dentro (también lo subido a mano), se deja', (await decidir([{ statusCode: 200, body: { files: [{ id: 'f' }] } }])).length === 0);
+      afirmar('Decidir vaciado: si Drive falla o no existe, no se toca (se reintenta)', (await decidir([{ statusCode: 404, body: {} }])).length === 0 && (await decidir([{ error: { message: 'red' } }])).length === 0);
+      const ev = (expr, json, previos = {}) => new Function('$json', '$', `return (${expr.trim().slice(3, -2)});`)(json, (n) => ({ item: { json: previos[n] }, first: () => ({ json: n === 'Configuración' ? { config: CONFIG } : previos[n] }) }));
+      const mirar = ev(por('Mirar si está vacía').parameters.url, { vaciar: { carpeta_id: 'C1aaaaaaaa' } });
+      afirmar('Mirar si está vacía: lista los hijos de esa carpeta (archivos y carpetas, sin papelera), uno basta', decodeURIComponent(mirar) === "https://www.googleapis.com/drive/v3/files?pageSize=1&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id)&q='C1aaaaaaaa' in parents and trashed = false", mirar);
+      afirmar('Vaciar en Drive: PATCH trashed true (va a la papelera, se recupera)', ev(por('Vaciar en Drive').parameters.url, { vaciar: { carpeta_id: 'C1aaaaaaaa' } }) === 'https://www.googleapis.com/drive/v3/files/C1aaaaaaaa?supportsAllDrives=true' && ev(por('Vaciar en Drive').parameters.jsonBody, {}) === '{"trashed":true}' && por('Vaciar en Drive').parameters.method === 'PATCH');
+      const anot = (json) => JSON.parse(ev(por('Anotar vaciado').parameters.jsonBody, json, { 'Decidir vaciado': { vaciar: { id: 'id-fila' } } }));
+      afirmar('Anotar vaciado: si Drive la mandó a la papelera, se anota; si no, un id que no existe (no anota y se reintenta)', anot({ statusCode: 200 }).p_id === 'id-fila' && anot({ statusCode: 403 }).p_id === '00000000-0000-0000-0000-000000000000' && anot({ error: {} }).p_id === '00000000-0000-0000-0000-000000000000');
+      for (const n of ['Mirar si está vacía', 'Vaciar en Drive']) afirmar(`"${n}" usa la credencial de Google Drive y no corta el flujo`, por(n).parameters.nodeCredentialType === 'googleDriveOAuth2Api' && por(n).onError === 'continueRegularOutput');
+      for (const n of ['Leer carpetas por vaciar', 'Anotar vaciado', 'Leer carpetas creadas']) afirmar(`"${n}" usa la credencial de Supabase`, por(n).parameters.nodeCredentialType === 'supabaseApi');
+    }
     afirmar('los dos disparadores van a Configuración', flujo.connections['Programación'].main[0][0].node === 'Configuración' && flujo.connections['Disparador manual'].main[0][0].node === 'Configuración');
-    afirmar('se ejecuta cada minuto', por('Programación').parameters.rule.interval[0].minutesInterval === 1);
+    afirmar('se ejecuta cada 10 segundos', por('Programación').parameters.rule.interval[0].field === 'seconds' && por('Programación').parameters.rule.interval[0].secondsInterval === 10);
+    afirmar('no guarda las ejecuciones que salen bien (sí las que fallan)', flujo.settings.saveDataSuccessExecution === 'none' && flujo.settings.saveDataErrorExecution === 'all');
+    afirmar('¿Tengo turno? solo deja seguir por «sí»: sin turno, el flujo acaba', flujo.connections['¿Tengo turno?'].main.length === 1 || flujo.connections['¿Tengo turno?'].main[1]?.length === 0 || flujo.connections['¿Tengo turno?'].main[1] === undefined);
+    {
+      const ev = (expr, json, previos = {}) => new Function('$json', '$', `return (${expr.trim().slice(3, -2)});`)(json, (n) => ({ first: () => ({ json: n === 'Configuración' ? { config: { ...CONFIG, turno_s: 60 } } : previos[n] }) }));
+      const tomar = por('Tomar turno');
+      afirmar('Tomar turno: RPC tomar_turno con el nombre del turno y su duración, una sola vez y SIN tragarse el error (sin actualizar la base de datos a la 1.5, la ejecución sale en rojo)', tomar.parameters.url.endsWith('/rest/v1/rpc/tomar_turno') && JSON.stringify(JSON.parse(ev(tomar.parameters.jsonBody, {}))) === JSON.stringify({ p_nombre: 'sincronizar_drive', p_segundos: 60 }) && tomar.executeOnce === true && tomar.onError === undefined && tomar.parameters.nodeCredentialType === 'supabaseApi');
+      const cond = por('¿Tengo turno?').parameters.conditions.conditions[0].leftValue;
+      afirmar('¿Tengo turno?: sí solo con turno: true', ev(cond, { turno: true, token: 'x' }) === 'si' && ev(cond, { turno: false }) === 'no' && ev(cond, {}) === 'no' && ev(cond, { turno: 'true' }) === 'no');
+      const soltar = por('Soltar turno');
+      afirmar('Soltar turno: RPC soltar_turno con el token de «Tomar turno», una sola vez y sin cortar el flujo', soltar.parameters.url.endsWith('/rest/v1/rpc/soltar_turno') && JSON.stringify(JSON.parse(ev(soltar.parameters.jsonBody, {}, { 'Tomar turno': { turno: true, token: 'tok-1' } }))) === JSON.stringify({ p_nombre: 'sincronizar_drive', p_token: 'tok-1' }) && soltar.executeOnce === true && soltar.onError === 'continueRegularOutput');
+    }
     for (const n of ['Leer padres', 'Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3', 'Google Drive']) {
       afirmar(`"${n}" usa la credencial de Google Drive`, por(n).parameters.nodeCredentialType === 'googleDriveOAuth2Api');
       afirmar(`"${n}" devuelve la respuesta completa sin fallar ante HTTP`, por(n).parameters.options.response.response.fullResponse === true && por(n).parameters.options.response.response.neverError === true);

@@ -7,8 +7,8 @@
         "rule": {
           "interval": [
             {
-              "field": "minutes",
-              "minutesInterval": 1
+              "field": "seconds",
+              "secondsInterval": 10
             }
           ]
         }
@@ -35,7 +35,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Nodo \"Configuración\" del flujo \"Sincronizar Drive\": todo lo que se toca a mano está aquí.\n// Los demás nodos leen estos valores con $('Configuración').first().json.config\n// (Es otro flujo de n8n y por eso repite SUPABASE_URL: hay que ponerla en todos los flujos.)\n\n// Los identificadores (no son secretos) se leen del .env del servidor, así se ponen UNA vez para todos los flujos.\n// Si una variable no está en el .env, vale lo que esté escrito aquí abajo.\nconst delEntorno = (clave, porDefecto) => {\n  try {\n    return String($env[clave] ?? '').trim() || porDefecto;\n  } catch (e) {\n    return porDefecto;\n  }\n};\n\n// === Valores fáciles de cambiar ===\n// Project URL de Supabase (Integrations > Data API), sin /rest/v1 al final. No es un secreto.\nconst SUPABASE_URL = delEntorno('SUPABASE_URL', 'https://TU-PROYECTO.supabase.co');\n// ID de la carpeta \"Secretaria\" de Drive: lo que hay en la URL al abrirla (drive.google.com/drive/folders/<ID>).\nconst CARPETA_RAIZ_ID = delEntorno('DRIVE_CARPETA_RAIZ_ID', 'TU-CARPETA-RAIZ');\n// Máximo de archivos que se mueven en cada ejecución (cada minuto)\nconst LOTE = 20;\n// ==================================\n\nif (!/^https:\\/\\/[a-z0-9-]+\\.supabase\\.co\\/?$/i.test(SUPABASE_URL) || SUPABASE_URL.includes('TU-PROYECTO')) {\n  throw new Error('Configuración: pon tu Project URL de Supabase en SUPABASE_URL (https://<ref>.supabase.co, sin /rest/v1). Va en el .env del servidor (SUPABASE_URL=…, y después docker compose up -d)');\n}\nif (!/^[A-Za-z0-9_-]{10,}$/.test(CARPETA_RAIZ_ID) || CARPETA_RAIZ_ID.includes('TU-CARPETA')) {\n  throw new Error('Configuración: pon el ID de la carpeta \"Secretaria\" de Drive en CARPETA_RAIZ_ID (solo letras, números, guion y guion bajo). Va en el .env del servidor (DRIVE_CARPETA_RAIZ_ID=…, y después docker compose up -d)');\n}\nif (!Number.isInteger(LOTE) || LOTE <= 0) throw new Error('Configuración: LOTE debe ser un entero positivo');\n\nreturn [\n  {\n    json: {\n      config: {\n        supabase_url: SUPABASE_URL.replace(/\\/+$/, ''),\n        carpeta_raiz_id: CARPETA_RAIZ_ID,\n        lote: LOTE,\n      },\n    },\n  },\n];\n"
+        "jsCode": "// Nodo \"Configuración\" del flujo \"Sincronizar Drive\": todo lo que se toca a mano está aquí.\n// Los demás nodos leen estos valores con $('Configuración').first().json.config\n// (Es otro flujo de n8n y por eso repite SUPABASE_URL: hay que ponerla en todos los flujos.)\n\n// Los identificadores (no son secretos) se leen del .env del servidor, así se ponen UNA vez para todos los flujos.\n// Si una variable no está en el .env, vale lo que esté escrito aquí abajo.\nconst delEntorno = (clave, porDefecto) => {\n  try {\n    return String($env[clave] ?? '').trim() || porDefecto;\n  } catch (e) {\n    return porDefecto;\n  }\n};\n\n// === Valores fáciles de cambiar ===\n// Project URL de Supabase (Integrations > Data API), sin /rest/v1 al final. No es un secreto.\nconst SUPABASE_URL = delEntorno('SUPABASE_URL', 'https://TU-PROYECTO.supabase.co');\n// ID de la carpeta \"Secretaria\" de Drive: lo que hay en la URL al abrirla (drive.google.com/drive/folders/<ID>).\nconst CARPETA_RAIZ_ID = delEntorno('DRIVE_CARPETA_RAIZ_ID', 'TU-CARPETA-RAIZ');\n// Máximo de archivos que se mueven en cada ejecución (cada 10 segundos)\nconst LOTE = 20;\n// Cuánto dura, como mucho, el turno de una ejecución (base de datos 1.5): si una ejecución muere a medias, las siguientes esperan esto y siguen.\n// Una pasada normal tarda pocos segundos y suelta el turno al acabar.\nconst TURNO_S = 60;\n// ==================================\n\nif (!/^https:\\/\\/[a-z0-9-]+\\.supabase\\.co\\/?$/i.test(SUPABASE_URL) || SUPABASE_URL.includes('TU-PROYECTO')) {\n  throw new Error('Configuración: pon tu Project URL de Supabase en SUPABASE_URL (https://<ref>.supabase.co, sin /rest/v1). Va en el .env del servidor (SUPABASE_URL=…, y después docker compose up -d)');\n}\nif (!/^[A-Za-z0-9_-]{10,}$/.test(CARPETA_RAIZ_ID) || CARPETA_RAIZ_ID.includes('TU-CARPETA')) {\n  throw new Error('Configuración: pon el ID de la carpeta \"Secretaria\" de Drive en CARPETA_RAIZ_ID (solo letras, números, guion y guion bajo). Va en el .env del servidor (DRIVE_CARPETA_RAIZ_ID=…, y después docker compose up -d)');\n}\nif (!Number.isInteger(LOTE) || LOTE <= 0) throw new Error('Configuración: LOTE debe ser un entero positivo');\nif (!Number.isInteger(TURNO_S) || TURNO_S < 5 || TURNO_S > 600) throw new Error('Configuración: TURNO_S debe ser un entero entre 5 y 600');\n\nreturn [\n  {\n    json: {\n      config: {\n        supabase_url: SUPABASE_URL.replace(/\\/+$/, ''),\n        carpeta_raiz_id: CARPETA_RAIZ_ID,\n        lote: LOTE,\n        turno_s: TURNO_S,\n      },\n    },\n  },\n];\n"
       },
       "id": "d71e7e00-0003-4000-8000-000000000003",
       "name": "Configuración",
@@ -100,14 +100,87 @@
     },
     {
       "parameters": {
-        "jsCode": "// Nodo \"Preparar\": deja un item por cada cosa pendiente de hacer en Drive, primero los archivos y después las carpetas pedidas.\n// Los archivos primero porque \"Leer padres\" devuelve una respuesta por item, en el mismo orden, y solo los archivos la usan.\n// \"Leer pendientes\" y \"Leer carpetas pendientes\" devuelven siempre algo (Always Output Data), aunque sea un item vacío:\n// aquí se descarta. Si no queda ninguno, devuelve [] y el flujo termina sin tocar Drive.\n\nconst filas = (items) => items.map((i) => i.json).filter((r) => r && typeof r === 'object');\n\nconst archivos = filas($('Leer pendientes').all()).filter((r) => typeof r.id === 'string' && typeof r.drive_file_id === 'string' && r.drive_file_id !== '');\nconst carpetas = filas($input.all()).filter((r) => typeof r.id === 'string' && typeof r.ruta === 'string' && r.ruta !== '');\n\nreturn [...archivos.map((archivo) => ({ json: { archivo } })), ...carpetas.map((carpeta) => ({ json: { carpeta } }))];\n"
+        "jsCode": "// Nodo \"Hay trabajo\": deja pasar UN item si hay algún archivo o carpeta pendiente y ninguno si no. Así, cuando no hay nada que hacer (casi\n// siempre), el flujo termina aquí sin pedir el turno ni tocar Drive: dos lecturas de Supabase cada 10 segundos y nada más.\n// Usa la misma función que «Preparar» (se inserta aquí al generar el flujo): no editar aquí.\n\n// Nodo \"Preparar\": deja un item por cada cosa pendiente de hacer en Drive, primero los archivos y después las carpetas pedidas.\n// Los archivos primero porque \"Leer padres\" devuelve una respuesta por item, en el mismo orden, y solo los archivos la usan.\n// \"Leer pendientes\" y \"Leer carpetas pendientes\" devuelven siempre algo (Always Output Data), aunque sea un item vacío:\n// aquí se descarta. Si no queda ninguno, devuelve [] y el flujo termina sin tocar Drive. Las dos se leen por su nombre: entre ellas y\n// este nodo están «Hay trabajo» y el turno (base de datos 1.5).\n// preparar() también la usa «Hay trabajo», para no pedir el turno cuando no hay nada que hacer.\n\nconst filas = (items) => items.map((i) => i.json).filter((r) => r && typeof r === 'object');\n\nfunction preparar(filasArchivos, filasCarpetas) {\n  const archivos = filas(filasArchivos).filter((r) => typeof r.id === 'string' && typeof r.drive_file_id === 'string' && r.drive_file_id !== '');\n  const carpetas = filas(filasCarpetas).filter((r) => typeof r.id === 'string' && typeof r.ruta === 'string' && r.ruta !== '');\n  return [...archivos.map((archivo) => ({ json: { archivo } })), ...carpetas.map((carpeta) => ({ json: { carpeta } }))];\n}\n\n// --- Pegamento con n8n ---\nreturn preparar($('Leer pendientes').all(), $('Leer carpetas pendientes').all()).length > 0 ? [{ json: {} }] : [];\n"
+      },
+      "id": "d71e7e00-0015-4000-8000-000000000015",
+      "name": "Hay trabajo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {},
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.config.supabase_url }}/rest/v1/rpc/tomar_turno",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_nombre: 'sincronizar_drive', p_segundos: $('Configuración').first().json.config.turno_s }) }}"
+      },
+      "id": "d71e7e00-0016-4000-8000-000000000016",
+      "name": "Tomar turno",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": null,
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d71e7e00-0017-4000-8000-000000000001",
+              "leftValue": "={{ $json.turno === true ? 'si' : 'no' }}",
+              "rightValue": "si",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d71e7e00-0017-4000-8000-000000000017",
+      "name": "¿Tengo turno?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo \"Preparar\": deja un item por cada cosa pendiente de hacer en Drive, primero los archivos y después las carpetas pedidas.\n// Los archivos primero porque \"Leer padres\" devuelve una respuesta por item, en el mismo orden, y solo los archivos la usan.\n// \"Leer pendientes\" y \"Leer carpetas pendientes\" devuelven siempre algo (Always Output Data), aunque sea un item vacío:\n// aquí se descarta. Si no queda ninguno, devuelve [] y el flujo termina sin tocar Drive. Las dos se leen por su nombre: entre ellas y\n// este nodo están «Hay trabajo» y el turno (base de datos 1.5).\n// preparar() también la usa «Hay trabajo», para no pedir el turno cuando no hay nada que hacer.\n\nconst filas = (items) => items.map((i) => i.json).filter((r) => r && typeof r === 'object');\n\nfunction preparar(filasArchivos, filasCarpetas) {\n  const archivos = filas(filasArchivos).filter((r) => typeof r.id === 'string' && typeof r.drive_file_id === 'string' && r.drive_file_id !== '');\n  const carpetas = filas(filasCarpetas).filter((r) => typeof r.id === 'string' && typeof r.ruta === 'string' && r.ruta !== '');\n  return [...archivos.map((archivo) => ({ json: { archivo } })), ...carpetas.map((carpeta) => ({ json: { carpeta } }))];\n}\n\n// --- Pegamento con n8n ---\nreturn preparar($('Leer pendientes').all(), $('Leer carpetas pendientes').all());\n"
       },
       "id": "d71e7e00-0005-4000-8000-000000000005",
       "name": "Preparar",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
+        1440,
         0
       ]
     },
@@ -132,7 +205,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        960,
+        1680,
         0
       ],
       "onError": "continueRegularOutput",
@@ -164,7 +237,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1200,
+        1920,
         0
       ],
       "onError": "continueRegularOutput",
@@ -197,7 +270,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1440,
+        2160,
         0
       ],
       "onError": "continueRegularOutput",
@@ -230,7 +303,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1680,
+        2400,
         0
       ],
       "onError": "continueRegularOutput",
@@ -244,14 +317,40 @@
     },
     {
       "parameters": {
-        "jsCode": "// Nodo \"Planificar\": decide qué petición hace falta en Drive para cada archivo pendiente.\n// La lógica está en planificarAcciones (comun.js); aquí solo se leen los nodos anteriores.\n\n// Funciones puras compartidas por los nodos del flujo \"Sincronizar Drive\".\n// n8n no permite importar código entre nodos: el generador inserta este archivo en cada nodo que\n// lo necesita, en la línea que contiene solo el marcador COMUN (entre guiones bajos dobles y en un\n// comentario de bloque). No usa nada de n8n, así que se prueba sin red.\n\n// Estructura de carpetas bajo la carpeta raíz \"Secretaria\":\n//   Entrada/                  archivos recibidos que aún no tienen item ni carpeta pedida\n//   Notas/                    archivos que cuelgan de un item\n//   {carpeta pedida}/         lo que el usuario pide (\"Fotos\", \"Fotos/Viajes\"; hasta 3 niveles): manda sobre el item\n// Todas las carpetas que falten se crean solas, nivel a nivel (un nivel por pasada de un minuto).\nconst CARPETA_NOTAS = 'Notas';\nconst NIVELES_MAX = 3; // niveles de carpetas que se leen y que puede tener una carpeta pedida\n\nconst textoOnull = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);\n\n// Ruta de carpetas (desde la raíz) donde debe estar el archivo de un item: siempre ['Notas'] (una carpeta pedida manda sobre esto).\nfunction rutaDestino() {\n  return [CARPETA_NOTAS];\n}\n\n// Ruta pedida por el usuario (\"Fotos/Viajes\") -> ['Fotos', 'Viajes'], o null si no es válida. Las mismas reglas que la\n// restricción archivos_carpeta_destino_valida de la base de datos (segunda barrera): de 1 a 3 niveles de 1 a 60\n// caracteres, sin \"\\\" ni caracteres de control, ningún nivel es \".\" ni \"..\", y ninguno empieza ni acaba en espacio.\nfunction segmentosCarpeta(texto) {\n  if (typeof texto !== 'string') return null;\n  const segs = texto.split('/');\n  if (segs.length < 1 || segs.length > NIVELES_MAX) return null;\n  for (const s of segs) {\n    if (s.length < 1 || s.length > 60) return null;\n    if (/[\\\\\\u0000-\\u001f\\u007f]/.test(s)) return null;\n    if (s === '.' || s === '..') return null;\n    if (s !== s.trim()) return null;\n  }\n  return segs;\n}\n\n// Nombre de archivo apto para Drive (el que se pone al renombrar): sin caracteres de control ni \\ / : * ? \" < > |, sin\n// puntos iniciales y de hasta 120 caracteres conservando la extensión\nfunction nombreArchivoSeguro(nombre) {\n  let n = String(nombre ?? '')\n    .replace(/[\\u0000-\\u001f\\u007f\\\\/:*?\"<>|]/g, '_')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .replace(/^\\.+/, '');\n  if (n.length > 120) {\n    const p = n.lastIndexOf('.');\n    const ext = p > 0 && n.length - p <= 10 ? n.slice(p) : '';\n    n = n.slice(0, 120 - ext.length).trimEnd() + ext;\n  }\n  return n;\n}\n\n// Literal de cadena para el parámetro q de files.list: la barra invertida y la comilla simple se escapan con barra\nconst escaparQ = (s) => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\n\n// Búsqueda de una carpeta por nombre exacto dentro de otra (sintaxis oficial de la guía \"Search for files and folders\")\nfunction consultaCarpeta(nombre, padreId) {\n  if (!/^[A-Za-z0-9_-]+$/.test(String(padreId))) throw new Error(`Id de carpeta no válido: ${padreId}`);\n  return `mimeType = 'application/vnd.google-apps.folder' and name = '${escaparQ(nombre)}' and '${padreId}' in parents and trashed = false`;\n}\n\n// Carpetas hijas de varias carpetas a la vez (\"'a' in parents or 'b' in parents\"): una sola consulta por nivel. Sin\n// padres, una consulta que no devuelve nada. Los ids de Drive son alfanuméricos; cualquier otra cosa se rechaza.\nconst MAX_PADRES_POR_CONSULTA = 100;\nfunction consultaNivel(padreIds, raizId) {\n  const ids = [...new Set(padreIds)];\n  if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(String(id)))) throw new Error('Id de carpeta no válido');\n  if (ids.length > MAX_PADRES_POR_CONSULTA) throw new Error(`Demasiadas carpetas en un nivel (${ids.length}): no se puede listar de una vez`);\n  let padres;\n  if (ids.length > 0) {\n    padres = ids.map((id) => `'${id}' in parents`).join(' or ');\n  } else {\n    // Sin padres que consultar no vale inventar un id: Drive contesta 404 a un id que no existe (así falló la primera versión,\n    // que usaba un marcador). Se pregunta por algo válido que no puede devolver nada: las hijas de la raíz con un nombre que es\n    // y no es a la vez.\n    if (!/^[A-Za-z0-9_-]+$/.test(String(raizId))) throw new Error(`Id de carpeta no válido: ${raizId}`);\n    padres = `'${raizId}' in parents and name = 'a' and name != 'a'`;\n  }\n  return `mimeType = 'application/vnd.google-apps.folder' and trashed = false and (${padres})`;\n}\n\nconst API_DRIVE = 'https://www.googleapis.com/drive/v3/files';\nconst MIME_CARPETA = 'application/vnd.google-apps.folder';\nconst nfc = (s) => String(s).normalize('NFC');\n// Dos nombres de carpeta son la misma si solo difieren en mayúsculas o en cómo está codificada una tilde\nconst clave = (s) => nfc(s).toLowerCase();\n\n// Carpetas hijas de cada carpeta, a partir de los listados por nivel (un listado por nivel: { statusCode, body }).\n// Devuelve un Map idPadre -> [{ id, name }]. Falla si un listado no es correcto o Drive devolvió más de una página:\n// con el árbol incompleto parecería que faltan carpetas que sí existen y se crearían duplicadas.\nfunction hijosPorPadre(niveles) {\n  const hijos = new Map();\n  (niveles || []).forEach((r, i) => {\n    if (!r || !(r.statusCode >= 200 && r.statusCode < 300) || !Array.isArray(r.body?.files)) {\n      throw new Error(`no se pudieron listar las carpetas de Drive (nivel ${i + 1}: ${r?.error ? String(r.error.message ?? r.error) : `HTTP ${r?.statusCode}`})`);\n    }\n    if (r.body.nextPageToken) {\n      throw new Error(`Drive devolvió más de una página de carpetas en el nivel ${i + 1}; se para para no crear carpetas duplicadas`);\n    }\n    for (const f of r.body.files) {\n      for (const p of Array.isArray(f.parents) ? f.parents : []) {\n        if (!hijos.has(p)) hijos.set(p, []);\n        hijos.get(p).push({ id: f.id, name: f.name });\n      }\n    }\n  });\n  // Orden estable (por nombre y luego por id): si hubiera dos carpetas con el mismo nombre se elige siempre la misma\n  for (const lista of hijos.values()) lista.sort((a, b) => nfc(a.name).localeCompare(nfc(b.name)) || String(a.id).localeCompare(String(b.id)));\n  return hijos;\n}\n\n// Baja por la ruta desde la raíz. Devuelve { id } si existe entera o { falta: { padreId, nombre, ruta } } con la primera\n// carpeta que no existe (se crea; el archivo se mueve en la pasada siguiente).\nfunction resolverRuta(segmentos, raizId, hijos) {\n  let padre = raizId;\n  for (let i = 0; i < segmentos.length; i++) {\n    const existente = (hijos.get(padre) || []).find((c) => clave(c.name) === clave(segmentos[i]));\n    if (!existente) return { falta: { padreId: padre, nombre: segmentos[i], ruta: segmentos.slice(0, i + 1).join('/') } };\n    padre = existente.id;\n  }\n  return { id: padre };\n}\n\n// Decide qué hacer con cada archivo pendiente. Entradas:\n//   archivos   filas de Supabase (con el item embebido en \"items\": objeto o null)\n//   carpetas   filas de carpetas_pedidas pendientes ({ id, ruta, updated_at }); van DESPUÉS de los archivos\n//   padres     respuestas de GET files/{id}?fields=id,name,parents,trashed, en el mismo orden: { statusCode, body }\n//   raizId     id de la carpeta \"Secretaria\"\n//   niveles    listados de carpetas por nivel (hijas de la raíz, de esas, y de esas): [{ statusCode, body }]\n// Devuelve { acciones, fallos }. Cada acción lleva metodo, url y cuerpo (lo que ejecuta el nodo HTTP) y, si es\n// de un archivo, archivo_id, updated_at (para escribir con condición) y carpeta_id (destino).\n//   crear_carpeta  falta una carpeta de la ruta: se crea y el archivo se mueve en la pasada siguiente\n//   mover          addParents/removeParents calculados con los padres reales (y, si hace falta, el nuevo nombre)\n//   renombrar      el archivo no tiene a dónde ir (sin item ni carpeta pedida) pero su nombre ha cambiado\n//   limpiar        no hay nada que hacer (sin destino ni cambio de nombre, en la papelera o ya no existe)\n//   carpeta_lista  una carpeta pedida ya existe entera: se anota su id y se limpia la marca (PATCH vacío sobre la carpeta)\n// El destino sale de la carpeta pedida si la hay (manda siempre) o, si no, del item.\nfunction planificarAcciones({ archivos, carpetas = [], padres, raizId, niveles }) {\n  const acciones = [];\n  const fallos = [];\n  const creadas = new Set();\n  const hijos = hijosPorPadre(niveles);\n\n  // Crea el primer nivel que falta de una ruta (un nivel por pasada). Si dos peticiones piden la misma carpeta (aunque\n  // cambie la capitalización) se crea una sola vez.\n  const crearSiHaceFalta = (f) => {\n    const k = `${f.padreId}|${clave(f.nombre)}`;\n    if (creadas.has(k)) return;\n    creadas.add(k);\n    acciones.push({\n      tipo: 'crear_carpeta',\n      etiqueta: `crear carpeta ${f.ruta}`,\n      metodo: 'POST',\n      url: `${API_DRIVE}?supportsAllDrives=true`,\n      // appProperties: marca privada de esta aplicación en Drive. «Vigilar Drive» la lee para no confundir las carpetas que crea la secretaria\n      // con las que crea el usuario a mano.\n      cuerpo: { name: f.nombre, mimeType: MIME_CARPETA, parents: [f.padreId], appProperties: { secretaria: '1' } },\n    });\n  };\n\n  const limpiar = (a, motivo) =>\n    acciones.push({\n      tipo: 'limpiar',\n      etiqueta: `limpiar ${a.id} (${motivo})`,\n      archivo_id: a.id,\n      updated_at: a.updated_at,\n      carpeta_id: null,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?supportsAllDrives=true`,\n      cuerpo: {},\n    });\n\n  archivos.forEach((a, i) => {\n    const r = padres[i] || {};\n    if (r.statusCode === 404) return limpiar(a, 'ya no existe en Drive');\n    if (!(r.statusCode >= 200 && r.statusCode < 300)) {\n      fallos.push(`leer padres de ${a.id}: ${r.error ? String(r.error.message ?? r.error) : `HTTP ${r.statusCode}`}`);\n      return;\n    }\n    if (r.body?.trashed === true) return limpiar(a, 'está en la papelera');\n\n    // Nombre: la base de datos manda. Solo se cambia si Drive tiene otro.\n    const deseado = textoOnull(a.nombre) ? nombreArchivoSeguro(a.nombre) : '';\n    const renombrado = deseado !== '' && typeof r.body?.name === 'string' && r.body.name !== deseado ? deseado : null;\n\n    // Destino: la carpeta pedida manda sobre la del item\n    let segmentos = null;\n    if (a.carpeta_destino !== null && a.carpeta_destino !== undefined) {\n      segmentos = segmentosCarpeta(a.carpeta_destino);\n      if (!segmentos) {\n        fallos.push(`carpeta de destino no válida en ${a.id}: ${JSON.stringify(a.carpeta_destino).slice(0, 80)}`);\n        return;\n      }\n    } else if (a.items) {\n      segmentos = rutaDestino(a.items);\n    }\n\n    if (!segmentos) {\n      if (!renombrado) return limpiar(a, 'no tiene item ni carpeta pedida');\n      return acciones.push({\n        tipo: 'renombrar',\n        etiqueta: `renombrar ${a.id} a «${renombrado}»`,\n        archivo_id: a.id,\n        updated_at: a.updated_at,\n        carpeta_id: null,\n        metodo: 'PATCH',\n        url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?supportsAllDrives=true`,\n        cuerpo: { name: renombrado },\n      });\n    }\n\n    const resuelta = resolverRuta(segmentos, raizId, hijos);\n    if (resuelta.falta) {\n      crearSiHaceFalta(resuelta.falta);\n      return; // el archivo espera a la pasada siguiente\n    }\n    const destino = resuelta.id;\n\n    const padresActuales = Array.isArray(r.body?.parents) ? r.body.parents : [];\n    const anadir = padresActuales.includes(destino) ? [] : [destino];\n    const quitar = padresActuales.filter((p) => p !== destino);\n    const params = ['supportsAllDrives=true'];\n    if (anadir.length) params.push(`addParents=${encodeURIComponent(anadir.join(','))}`);\n    if (quitar.length) params.push(`removeParents=${encodeURIComponent(quitar.join(','))}`);\n    acciones.push({\n      tipo: 'mover',\n      etiqueta: `mover ${a.id} a ${segmentos.join('/')}`,\n      archivo_id: a.id,\n      updated_at: a.updated_at,\n      carpeta_id: destino,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?${params.join('&')}`,\n      cuerpo: renombrado ? { name: renombrado } : {},\n    });\n  });\n\n  // Carpetas pedidas sin mover archivos (\"crea la carpeta Proyectos dentro de Trabajo\"). Se crea el primer nivel que falte;\n  // cuando la ruta existe entera se anota (carpeta_lista). Esa acción pasa por el nodo de Drive como un PATCH vacío sobre la\n  // propia carpeta, que no cambia nada (el mismo recurso que usa \"limpiar\" con los archivos): así todas las acciones tienen\n  // la misma forma y el registro sigue alineado con las respuestas.\n  carpetas.forEach((c) => {\n    const segmentos = segmentosCarpeta(c.ruta);\n    if (!segmentos) {\n      fallos.push(`carpeta pedida no válida en ${c.id}: ${JSON.stringify(c.ruta).slice(0, 80)}`);\n      return;\n    }\n    const resuelta = resolverRuta(segmentos, raizId, hijos);\n    if (resuelta.falta) {\n      crearSiHaceFalta(resuelta.falta);\n      return;\n    }\n    acciones.push({\n      tipo: 'carpeta_lista',\n      etiqueta: `carpeta ${segmentos.join('/')} lista`,\n      carpeta_pedida_id: c.id,\n      updated_at: c.updated_at,\n      carpeta_id: resuelta.id,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(resuelta.id)}?supportsAllDrives=true`,\n      cuerpo: {},\n    });\n  });\n\n  return { acciones, fallos };\n}\n\n// --- Pegamento con n8n ---\nconst config = $('Configuración').first().json.config;\nconst preparados = $('Preparar').all().map((i) => i.json);\nconst archivos = preparados.filter((p) => p.archivo).map((p) => p.archivo);\nconst carpetas = preparados.filter((p) => p.carpeta).map((p) => p.carpeta);\n// \"Leer padres\" devuelve la respuesta completa, un item por item preparado y en el mismo orden: los archivos van primero,\n// así que sus respuestas son las primeras (las de las carpetas pedidas no se usan)\nconst padres = $('Leer padres').all().map((i) => i.json);\n// Un listado por nivel de carpetas (hijas de la raíz, de esas y de esas): cada uno con la respuesta completa\nconst niveles = ['Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3'].map((nodo) => $(nodo).first().json);\n\nlet plan;\ntry {\n  plan = planificarAcciones({ archivos, carpetas, padres, raizId: config.carpeta_raiz_id, niveles });\n} catch (e) {\n  // Sin el árbol de carpetas completo no se hace nada: crear carpetas \"que faltan\" podría duplicar las que existen\n  throw new Error(`Sincronizar Drive: ${e.message} (revisa la credencial de Google Drive y CARPETA_RAIZ_ID)`);\n}\nconst { acciones, fallos } = plan;\n\n// Un fallo aislado se reintenta al minuto siguiente. Si no se puede hacer NADA, se avisa con un error.\nif (fallos.length > 0 && acciones.length === 0) {\n  throw new Error(`Sincronizar Drive: ${fallos.length} fallo(s) y ninguna acción posible. ${fallos.slice(0, 3).join(' | ')}`);\n}\n\nreturn acciones.map((a) => ({ json: a }));\n"
+        "options": {},
+        "method": "GET",
+        "url": "={{ $('Configuración').first().json.config.supabase_url }}/rest/v1/carpetas_creadas?select=drive_id,padre_id,nombre&creada_at=gte.{{ encodeURIComponent(new Date(Date.now() - 60000).toISOString()) }}&limit=500",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi"
+      },
+      "id": "d71e7e00-0019-4000-8000-000000000019",
+      "name": "Leer carpetas creadas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2520,
+        160
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": null,
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo \"Planificar\": decide qué petición hace falta en Drive para cada archivo pendiente.\n// La lógica está en planificarAcciones (comun.js); aquí solo se leen los nodos anteriores.\n\n// Funciones puras compartidas por los nodos del flujo \"Sincronizar Drive\".\n// n8n no permite importar código entre nodos: el generador inserta este archivo en cada nodo que\n// lo necesita, en la línea que contiene solo el marcador COMUN (entre guiones bajos dobles y en un\n// comentario de bloque). No usa nada de n8n, así que se prueba sin red.\n\n// Estructura de carpetas bajo la carpeta raíz \"Secretaria\":\n//   Entrada/                  archivos recibidos que aún no tienen item ni carpeta pedida\n//   Notas/                    archivos que cuelgan de un item\n//   {carpeta pedida}/         lo que el usuario pide (\"Fotos\", \"Fotos/Viajes\"; hasta 3 niveles): manda sobre el item\n// Todas las carpetas que falten se crean solas, nivel a nivel (un nivel por pasada de un minuto).\nconst CARPETA_NOTAS = 'Notas';\nconst NIVELES_MAX = 3; // niveles de carpetas que se leen y que puede tener una carpeta pedida\n\nconst textoOnull = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);\n\n// Ruta de carpetas (desde la raíz) donde debe estar el archivo de un item: siempre ['Notas'] (una carpeta pedida manda sobre esto).\nfunction rutaDestino() {\n  return [CARPETA_NOTAS];\n}\n\n// Ruta pedida por el usuario (\"Fotos/Viajes\") -> ['Fotos', 'Viajes'], o null si no es válida. Las mismas reglas que la\n// restricción archivos_carpeta_destino_valida de la base de datos (segunda barrera): de 1 a 3 niveles de 1 a 60\n// caracteres, sin \"\\\" ni caracteres de control, ningún nivel es \".\" ni \"..\", y ninguno empieza ni acaba en espacio.\nfunction segmentosCarpeta(texto) {\n  if (typeof texto !== 'string') return null;\n  const segs = texto.split('/');\n  if (segs.length < 1 || segs.length > NIVELES_MAX) return null;\n  for (const s of segs) {\n    if (s.length < 1 || s.length > 60) return null;\n    if (/[\\\\\\u0000-\\u001f\\u007f]/.test(s)) return null;\n    if (s === '.' || s === '..') return null;\n    if (s !== s.trim()) return null;\n  }\n  return segs;\n}\n\n// Nombre de archivo apto para Drive (el que se pone al renombrar): sin caracteres de control ni \\ / : * ? \" < > |, sin\n// puntos iniciales y de hasta 120 caracteres conservando la extensión\nfunction nombreArchivoSeguro(nombre) {\n  let n = String(nombre ?? '')\n    .replace(/[\\u0000-\\u001f\\u007f\\\\/:*?\"<>|]/g, '_')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .replace(/^\\.+/, '');\n  if (n.length > 120) {\n    const p = n.lastIndexOf('.');\n    const ext = p > 0 && n.length - p <= 10 ? n.slice(p) : '';\n    n = n.slice(0, 120 - ext.length).trimEnd() + ext;\n  }\n  return n;\n}\n\n// Literal de cadena para el parámetro q de files.list: la barra invertida y la comilla simple se escapan con barra\nconst escaparQ = (s) => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\n\n// Búsqueda de una carpeta por nombre exacto dentro de otra (sintaxis oficial de la guía \"Search for files and folders\")\nfunction consultaCarpeta(nombre, padreId) {\n  if (!/^[A-Za-z0-9_-]+$/.test(String(padreId))) throw new Error(`Id de carpeta no válido: ${padreId}`);\n  return `mimeType = 'application/vnd.google-apps.folder' and name = '${escaparQ(nombre)}' and '${padreId}' in parents and trashed = false`;\n}\n\n// Carpetas hijas de varias carpetas a la vez (\"'a' in parents or 'b' in parents\"): una sola consulta por nivel. Sin\n// padres, una consulta que no devuelve nada. Los ids de Drive son alfanuméricos; cualquier otra cosa se rechaza.\nconst MAX_PADRES_POR_CONSULTA = 100;\nfunction consultaNivel(padreIds, raizId) {\n  const ids = [...new Set(padreIds)];\n  if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(String(id)))) throw new Error('Id de carpeta no válido');\n  if (ids.length > MAX_PADRES_POR_CONSULTA) throw new Error(`Demasiadas carpetas en un nivel (${ids.length}): no se puede listar de una vez`);\n  let padres;\n  if (ids.length > 0) {\n    padres = ids.map((id) => `'${id}' in parents`).join(' or ');\n  } else {\n    // Sin padres que consultar no vale inventar un id: Drive contesta 404 a un id que no existe (así falló la primera versión,\n    // que usaba un marcador). Se pregunta por algo válido que no puede devolver nada: las hijas de la raíz con un nombre que es\n    // y no es a la vez.\n    if (!/^[A-Za-z0-9_-]+$/.test(String(raizId))) throw new Error(`Id de carpeta no válido: ${raizId}`);\n    padres = `'${raizId}' in parents and name = 'a' and name != 'a'`;\n  }\n  return `mimeType = 'application/vnd.google-apps.folder' and trashed = false and (${padres})`;\n}\n\nconst API_DRIVE = 'https://www.googleapis.com/drive/v3/files';\nconst MIME_CARPETA = 'application/vnd.google-apps.folder';\nconst nfc = (s) => String(s).normalize('NFC');\n// Dos nombres de carpeta son la misma si solo difieren en mayúsculas o en cómo está codificada una tilde\nconst clave = (s) => nfc(s).toLowerCase();\n\n// Carpetas hijas de cada carpeta, a partir de los listados por nivel (un listado por nivel: { statusCode, body }).\n// Devuelve un Map idPadre -> [{ id, name }]. Falla si un listado no es correcto o Drive devolvió más de una página:\n// con el árbol incompleto parecería que faltan carpetas que sí existen y se crearían duplicadas.\nfunction hijosPorPadre(niveles) {\n  const hijos = new Map();\n  (niveles || []).forEach((r, i) => {\n    if (!r || !(r.statusCode >= 200 && r.statusCode < 300) || !Array.isArray(r.body?.files)) {\n      throw new Error(`no se pudieron listar las carpetas de Drive (nivel ${i + 1}: ${r?.error ? String(r.error.message ?? r.error) : `HTTP ${r?.statusCode}`})`);\n    }\n    if (r.body.nextPageToken) {\n      throw new Error(`Drive devolvió más de una página de carpetas en el nivel ${i + 1}; se para para no crear carpetas duplicadas`);\n    }\n    for (const f of r.body.files) {\n      for (const p of Array.isArray(f.parents) ? f.parents : []) {\n        if (!hijos.has(p)) hijos.set(p, []);\n        hijos.get(p).push({ id: f.id, name: f.name });\n      }\n    }\n  });\n  // Orden estable (por nombre y luego por id): si hubiera dos carpetas con el mismo nombre se elige siempre la misma\n  for (const lista of hijos.values()) lista.sort((a, b) => nfc(a.name).localeCompare(nfc(b.name)) || String(a.id).localeCompare(String(b.id)));\n  return hijos;\n}\n\n// Baja por la ruta desde la raíz. Devuelve { id } si existe entera o { falta: { padreId, nombre, ruta } } con la primera\n// carpeta que no existe (se crea; el archivo se mueve en la pasada siguiente).\nfunction resolverRuta(segmentos, raizId, hijos) {\n  let padre = raizId;\n  for (let i = 0; i < segmentos.length; i++) {\n    const existente = (hijos.get(padre) || []).find((c) => clave(c.name) === clave(segmentos[i]));\n    if (!existente) return { falta: { padreId: padre, nombre: segmentos[i], ruta: segmentos.slice(0, i + 1).join('/') } };\n    padre = existente.id;\n  }\n  return { id: padre };\n}\n\n// Decide qué hacer con cada archivo pendiente. Entradas:\n//   archivos   filas de Supabase (con el item embebido en \"items\": objeto o null)\n//   carpetas   filas de carpetas_pedidas pendientes ({ id, ruta, updated_at }); van DESPUÉS de los archivos\n//   padres     respuestas de GET files/{id}?fields=id,name,parents,trashed, en el mismo orden: { statusCode, body }\n//   raizId     id de la carpeta \"Secretaria\"\n//   niveles    listados de carpetas por nivel (hijas de la raíz, de esas, y de esas): [{ statusCode, body }]\n//   recientes  carpetas que creó una pasada anterior hace menos de 60 s ({ drive_id, padre_id, nombre }, tabla carpetas_creadas de la\n//              base de datos 1.5): cuentan como existentes aunque Drive aún no las liste, para no crearlas dos veces (pasadas cada 10 s)\n// Devuelve { acciones, fallos }. Cada acción lleva metodo, url y cuerpo (lo que ejecuta el nodo HTTP) y, si es\n// de un archivo, archivo_id, updated_at (para escribir con condición) y carpeta_id (destino).\n//   crear_carpeta  falta una carpeta de la ruta: se crea y el archivo se mueve en la pasada siguiente\n//   mover          addParents/removeParents calculados con los padres reales (y, si hace falta, el nuevo nombre)\n//   renombrar      el archivo no tiene a dónde ir (sin item ni carpeta pedida) pero su nombre ha cambiado\n//   limpiar        no hay nada que hacer (sin destino ni cambio de nombre, en la papelera o ya no existe)\n//   carpeta_lista  una carpeta pedida ya existe entera: se anota su id y se limpia la marca (PATCH vacío sobre la carpeta)\n// El destino sale de la carpeta pedida si la hay (manda siempre) o, si no, del item.\nfunction planificarAcciones({ archivos, carpetas = [], padres, raizId, niveles, recientes = [] }) {\n  const acciones = [];\n  const fallos = [];\n  const creadas = new Set();\n  const hijos = hijosPorPadre(niveles);\n  for (const r of recientes) {\n    if (!r || typeof r.drive_id !== 'string' || typeof r.padre_id !== 'string' || typeof r.nombre !== 'string') continue;\n    const lista = hijos.get(r.padre_id) ?? [];\n    if (!lista.some((c) => c.id === r.drive_id || clave(c.name) === clave(r.nombre))) lista.push({ id: r.drive_id, name: r.nombre });\n    hijos.set(r.padre_id, lista);\n  }\n\n  // Crea el primer nivel que falta de una ruta (un nivel por pasada). Si dos peticiones piden la misma carpeta (aunque\n  // cambie la capitalización) se crea una sola vez.\n  const crearSiHaceFalta = (f) => {\n    const k = `${f.padreId}|${clave(f.nombre)}`;\n    if (creadas.has(k)) return;\n    creadas.add(k);\n    acciones.push({\n      tipo: 'crear_carpeta',\n      etiqueta: `crear carpeta ${f.ruta}`,\n      metodo: 'POST',\n      url: `${API_DRIVE}?supportsAllDrives=true`,\n      // appProperties: marca privada de esta aplicación en Drive. «Vigilar Drive» la lee para no confundir las carpetas que crea la secretaria\n      // con las que crea el usuario a mano.\n      cuerpo: { name: f.nombre, mimeType: MIME_CARPETA, parents: [f.padreId], appProperties: { secretaria: '1' } },\n    });\n  };\n\n  const limpiar = (a, motivo) =>\n    acciones.push({\n      tipo: 'limpiar',\n      etiqueta: `limpiar ${a.id} (${motivo})`,\n      archivo_id: a.id,\n      updated_at: a.updated_at,\n      carpeta_id: null,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?supportsAllDrives=true`,\n      cuerpo: {},\n    });\n\n  archivos.forEach((a, i) => {\n    const r = padres[i] || {};\n    if (r.statusCode === 404) return limpiar(a, 'ya no existe en Drive');\n    if (!(r.statusCode >= 200 && r.statusCode < 300)) {\n      fallos.push(`leer padres de ${a.id}: ${r.error ? String(r.error.message ?? r.error) : `HTTP ${r.statusCode}`}`);\n      return;\n    }\n    if (r.body?.trashed === true) return limpiar(a, 'está en la papelera');\n\n    // Nombre: la base de datos manda. Solo se cambia si Drive tiene otro.\n    const deseado = textoOnull(a.nombre) ? nombreArchivoSeguro(a.nombre) : '';\n    const renombrado = deseado !== '' && typeof r.body?.name === 'string' && r.body.name !== deseado ? deseado : null;\n\n    // Destino: la carpeta pedida manda sobre la del item\n    let segmentos = null;\n    if (a.carpeta_destino !== null && a.carpeta_destino !== undefined) {\n      segmentos = segmentosCarpeta(a.carpeta_destino);\n      if (!segmentos) {\n        fallos.push(`carpeta de destino no válida en ${a.id}: ${JSON.stringify(a.carpeta_destino).slice(0, 80)}`);\n        return;\n      }\n    } else if (a.items) {\n      segmentos = rutaDestino(a.items);\n    }\n\n    if (!segmentos) {\n      if (!renombrado) return limpiar(a, 'no tiene item ni carpeta pedida');\n      return acciones.push({\n        tipo: 'renombrar',\n        etiqueta: `renombrar ${a.id} a «${renombrado}»`,\n        archivo_id: a.id,\n        updated_at: a.updated_at,\n        carpeta_id: null,\n        metodo: 'PATCH',\n        url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?supportsAllDrives=true`,\n        cuerpo: { name: renombrado },\n      });\n    }\n\n    const resuelta = resolverRuta(segmentos, raizId, hijos);\n    if (resuelta.falta) {\n      crearSiHaceFalta(resuelta.falta);\n      return; // el archivo espera a la pasada siguiente\n    }\n    const destino = resuelta.id;\n\n    const padresActuales = Array.isArray(r.body?.parents) ? r.body.parents : [];\n    const anadir = padresActuales.includes(destino) ? [] : [destino];\n    const quitar = padresActuales.filter((p) => p !== destino);\n    const params = ['supportsAllDrives=true'];\n    if (anadir.length) params.push(`addParents=${encodeURIComponent(anadir.join(','))}`);\n    if (quitar.length) params.push(`removeParents=${encodeURIComponent(quitar.join(','))}`);\n    acciones.push({\n      tipo: 'mover',\n      etiqueta: `mover ${a.id} a ${segmentos.join('/')}`,\n      archivo_id: a.id,\n      updated_at: a.updated_at,\n      carpeta_id: destino,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(a.drive_file_id)}?${params.join('&')}`,\n      cuerpo: renombrado ? { name: renombrado } : {},\n    });\n  });\n\n  // Carpetas pedidas sin mover archivos (\"crea la carpeta Proyectos dentro de Trabajo\"). Se crea el primer nivel que falte;\n  // cuando la ruta existe entera se anota (carpeta_lista). Esa acción pasa por el nodo de Drive como un PATCH vacío sobre la\n  // propia carpeta, que no cambia nada (el mismo recurso que usa \"limpiar\" con los archivos): así todas las acciones tienen\n  // la misma forma y el registro sigue alineado con las respuestas.\n  carpetas.forEach((c) => {\n    const segmentos = segmentosCarpeta(c.ruta);\n    if (!segmentos) {\n      fallos.push(`carpeta pedida no válida en ${c.id}: ${JSON.stringify(c.ruta).slice(0, 80)}`);\n      return;\n    }\n    const resuelta = resolverRuta(segmentos, raizId, hijos);\n    if (resuelta.falta) {\n      crearSiHaceFalta(resuelta.falta);\n      return;\n    }\n    acciones.push({\n      tipo: 'carpeta_lista',\n      etiqueta: `carpeta ${segmentos.join('/')} lista`,\n      carpeta_pedida_id: c.id,\n      updated_at: c.updated_at,\n      carpeta_id: resuelta.id,\n      metodo: 'PATCH',\n      url: `${API_DRIVE}/${encodeURIComponent(resuelta.id)}?supportsAllDrives=true`,\n      cuerpo: {},\n    });\n  });\n\n  return { acciones, fallos };\n}\n\n// --- Pegamento con n8n ---\nconst config = $('Configuración').first().json.config;\nconst preparados = $('Preparar').all().map((i) => i.json);\nconst archivos = preparados.filter((p) => p.archivo).map((p) => p.archivo);\nconst carpetas = preparados.filter((p) => p.carpeta).map((p) => p.carpeta);\n// \"Leer padres\" devuelve la respuesta completa, un item por item preparado y en el mismo orden: los archivos van primero,\n// así que sus respuestas son las primeras (las de las carpetas pedidas no se usan)\nconst padres = $('Leer padres').all().map((i) => i.json);\n// Un listado por nivel de carpetas (hijas de la raíz, de esas y de esas): cada uno con la respuesta completa\nconst niveles = ['Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3'].map((nodo) => $(nodo).first().json);\n// Las carpetas creadas en las pasadas de los últimos 60 s (base de datos 1.5): sin actualizar la base de datos a la 1.5 la lectura falla y no hay ninguna\nlet recientes = [];\ntry {\n  recientes = $('Leer carpetas creadas').all().map((i) => i.json).filter((r) => r && typeof r.drive_id === 'string');\n} catch (e) {\n  recientes = [];\n}\n\nlet plan;\ntry {\n  plan = planificarAcciones({ archivos, carpetas, padres, raizId: config.carpeta_raiz_id, niveles, recientes });\n} catch (e) {\n  // Sin el árbol de carpetas completo no se hace nada: crear carpetas \"que faltan\" podría duplicar las que existen\n  throw new Error(`Sincronizar Drive: ${e.message} (revisa la credencial de Google Drive y CARPETA_RAIZ_ID)`);\n}\nconst { acciones, fallos } = plan;\n\n// Un fallo aislado se reintenta al minuto siguiente. Si no se puede hacer NADA, se avisa con un error.\nif (fallos.length > 0 && acciones.length === 0) {\n  throw new Error(`Sincronizar Drive: ${fallos.length} fallo(s) y ninguna acción posible. ${fallos.slice(0, 3).join(' | ')}`);\n}\n\nreturn acciones.map((a) => ({ json: a }));\n"
       },
       "id": "d71e7e00-0009-4000-8000-000000000009",
       "name": "Planificar",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1920,
+        2640,
         0
       ]
     },
@@ -279,7 +378,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2160,
+        2880,
         0
       ],
       "onError": "continueRegularOutput",
@@ -292,14 +391,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Nodo \"Registrar\": convierte la respuesta de Drive de cada acción en la actualización que hay que hacer en\n// Supabase. La respuesta llega completa (statusCode, body) porque el nodo de Drive no falla ante errores HTTP.\n//\n// Cada escritura lleva una condición sobre updated_at (el valor que leyó \"Leer pendientes\"): si el archivo cambió\n// mientras se movía, esa actualización no afecta a ninguna fila y el archivo sigue pendiente.\n\n// --- Pegamento con n8n ---\nconst config = $('Configuración').first().json.config;\nconst base = `${config.supabase_url}/rest/v1`;\nconst plan = $('Planificar').all().map((i) => i.json);\nconst respuestas = $input.all().map((i) => i.json);\n\nconst resumen = (cuerpo) => String(typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo ?? '')).slice(0, 200);\n\nconst escrituras = [];\nconst fallos = [];\nlet hechas = 0;\n\nrespuestas.forEach((r, i) => {\n  const p = plan[i];\n  const estado = r.statusCode;\n  if (!(estado >= 200 && estado < 300)) {\n    const motivo = r.error ? String(r.error.message ?? r.error) : `HTTP ${estado} ${resumen(r.body)}`;\n    fallos.push(`${p.etiqueta}: ${motivo}`);\n    return;\n  }\n  hechas += 1;\n  if (p.tipo === 'crear_carpeta') return; // nada que anotar: la pasada siguiente la encuentra por su nombre\n\n  // Una carpeta pedida que ya existe entera: se limpia su marca y se guarda el id de la última carpeta de la ruta\n  if (p.tipo === 'carpeta_lista') {\n    escrituras.push({\n      json: {\n        etiqueta: p.etiqueta,\n        metodo: 'PATCH',\n        url: `${base}/carpetas_pedidas?id=eq.${encodeURIComponent(p.carpeta_pedida_id)}&updated_at=eq.${encodeURIComponent(p.updated_at)}`,\n        cuerpo: { drive_pendiente: false, carpeta_id: p.carpeta_id },\n        prefer: 'return=minimal',\n      },\n    });\n    return;\n  }\n\n  // \"limpiar\" y \"renombrar\" no cambian la carpeta: carpeta_id no se incluye en el cuerpo\n  const cuerpo = p.tipo === 'mover' ? { drive_pendiente: false, carpeta_id: p.carpeta_id } : { drive_pendiente: false };\n  escrituras.push({\n    json: {\n      etiqueta: p.etiqueta,\n      metodo: 'PATCH',\n      url: `${base}/archivos?id=eq.${encodeURIComponent(p.archivo_id)}&updated_at=eq.${encodeURIComponent(p.updated_at)}`,\n      cuerpo,\n      prefer: 'return=minimal',\n    },\n  });\n});\n\n// Un fallo aislado se reintenta al minuto siguiente. Si no se ha podido hacer NADA (credencial caducada,\n// Drive caído…) se avisa con un error para que la ejecución salga en rojo.\nif (fallos.length > 0 && hechas === 0) {\n  throw new Error(`Sincronizar Drive: ${fallos.length} fallo(s) y nada hecho. ${fallos.slice(0, 3).join(' | ')}`);\n}\n\nreturn escrituras;\n"
+        "jsCode": "// Nodo \"Registrar\": convierte la respuesta de Drive de cada acción en la actualización que hay que hacer en\n// Supabase. La respuesta llega completa (statusCode, body) porque el nodo de Drive no falla ante errores HTTP.\n//\n// Cada escritura lleva una condición sobre updated_at (el valor que leyó \"Leer pendientes\"): si el archivo cambió\n// mientras se movía, esa actualización no afecta a ninguna fila y el archivo sigue pendiente.\n\n// --- Pegamento con n8n ---\nconst config = $('Configuración').first().json.config;\nconst base = `${config.supabase_url}/rest/v1`;\nconst plan = $('Planificar').all().map((i) => i.json);\nconst respuestas = $input.all().map((i) => i.json);\n\nconst resumen = (cuerpo) => String(typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo ?? '')).slice(0, 200);\n\nconst escrituras = [];\nconst fallos = [];\nlet hechas = 0;\n\nrespuestas.forEach((r, i) => {\n  const p = plan[i];\n  const estado = r.statusCode;\n  if (!(estado >= 200 && estado < 300)) {\n    const motivo = r.error ? String(r.error.message ?? r.error) : `HTTP ${estado} ${resumen(r.body)}`;\n    fallos.push(`${p.etiqueta}: ${motivo}`);\n    return;\n  }\n  hechas += 1;\n  // Una carpeta creada se anota (base de datos 1.5): la pasada siguiente, 10 s después, la cuenta aunque Drive aún no la liste\n  if (p.tipo === 'crear_carpeta') {\n    const idNueva = r.body?.id;\n    const padre = Array.isArray(p.cuerpo?.parents) ? p.cuerpo.parents[0] : null;\n    if (typeof idNueva === 'string' && idNueva !== '' && typeof padre === 'string') {\n      escrituras.push({\n        json: {\n          etiqueta: `anotar carpeta creada ${p.cuerpo.name}`,\n          metodo: 'POST',\n          url: `${base}/carpetas_creadas?on_conflict=drive_id`,\n          cuerpo: { drive_id: idNueva, padre_id: padre, nombre: p.cuerpo.name },\n          prefer: 'resolution=merge-duplicates,return=minimal',\n        },\n      });\n    }\n    return;\n  }\n\n  // Una carpeta pedida que ya existe entera: se limpia su marca y se guarda el id de la última carpeta de la ruta\n  if (p.tipo === 'carpeta_lista') {\n    escrituras.push({\n      json: {\n        etiqueta: p.etiqueta,\n        metodo: 'PATCH',\n        url: `${base}/carpetas_pedidas?id=eq.${encodeURIComponent(p.carpeta_pedida_id)}&updated_at=eq.${encodeURIComponent(p.updated_at)}`,\n        cuerpo: { drive_pendiente: false, carpeta_id: p.carpeta_id },\n        prefer: 'return=minimal',\n      },\n    });\n    return;\n  }\n\n  // \"limpiar\" y \"renombrar\" no cambian la carpeta: carpeta_id no se incluye en el cuerpo\n  const cuerpo = p.tipo === 'mover' ? { drive_pendiente: false, carpeta_id: p.carpeta_id } : { drive_pendiente: false };\n  escrituras.push({\n    json: {\n      etiqueta: p.etiqueta,\n      metodo: 'PATCH',\n      url: `${base}/archivos?id=eq.${encodeURIComponent(p.archivo_id)}&updated_at=eq.${encodeURIComponent(p.updated_at)}`,\n      cuerpo,\n      prefer: 'return=minimal',\n    },\n  });\n});\n\n// Un fallo aislado se reintenta en la pasada siguiente. Si no se ha podido hacer NADA (credencial caducada,\n// Drive caído…) se avisa con un error para que la ejecución salga en rojo.\nif (fallos.length > 0 && hechas === 0) {\n  throw new Error(`Sincronizar Drive: ${fallos.length} fallo(s) y nada hecho. ${fallos.slice(0, 3).join(' | ')}`);\n}\n\n// Sin nada que anotar (por ejemplo, solo se crearon carpetas) se manda una escritura que no toca ninguna fila: así «Escribir en Supabase» y\n// «Soltar turno» se ejecutan igual y la pasada siguiente (10 s después) no tiene que esperar a que caduque el turno.\nif (escrituras.length === 0) {\n  escrituras.push({\n    json: {\n      etiqueta: 'nada que anotar',\n      metodo: 'PATCH',\n      url: `${base}/carpetas_pedidas?id=eq.00000000-0000-0000-0000-000000000000`,\n      cuerpo: { drive_pendiente: false },\n      prefer: 'return=minimal',\n    },\n  });\n}\n\nreturn escrituras;\n"
       },
       "id": "d71e7e00-0011-4000-8000-000000000011",
       "name": "Registrar",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2400,
+        3120,
         0
       ]
     },
@@ -329,7 +428,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2640,
+        3360,
         0
       ],
       "onError": "continueRegularOutput",
@@ -342,7 +441,198 @@
     },
     {
       "parameters": {
-        "content": "## ① Disparo y configuración\nSe ejecuta **cada minuto** (Programación) o a mano (Disparador manual).\n**Configuración**: el único sitio con valores a mano (URL de Supabase, ID de la carpeta \"Secretaria\", lote).",
+        "options": {},
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.config.supabase_url }}/rest/v1/rpc/soltar_turno",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_nombre: 'sincronizar_drive', p_token: $('Tomar turno').first().json.token }) }}"
+      },
+      "id": "d71e7e00-0018-4000-8000-000000000018",
+      "name": "Soltar turno",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3600,
+        0
+      ],
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": null,
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.config.supabase_url }}/rest/v1/rpc/carpetas_por_vaciar",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_espera_s: 20 }) }}"
+      },
+      "id": "d71e7e00-0020-4000-8000-000000000020",
+      "name": "Leer carpetas por vaciar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": null,
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo \"Preparar vaciado\" (base de datos 1.5): las carpetas que se pidieron vaciar al mover sus archivos a otra y que ya no tienen ningún\n// archivo registrado dentro (lo decide carpetas_por_vaciar()). Un item por carpeta, para mirar en Drive si de verdad está vacía.\n// Las carpetas de siempre (Entrada y Notas) NUNCA se vacían, aunque estén vacías: tercera barrera (las otras dos\n// están en la base de datos). Sin la base de datos 1.5 la lectura falla y no hay nada que vaciar.\n\nconst PROTEGIDA = (ruta) => {\n  const r = String(ruta ?? '').trim().toLowerCase();\n  return r === '' || r === 'entrada' || r === 'notas';\n};\nconst ID_DRIVE = /^[A-Za-z0-9_-]{10,100}$/;\nconst ID_FILA = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nfunction prepararVaciado(filas) {\n  return filas\n    .filter((f) => f && typeof f.id === 'string' && ID_FILA.test(f.id) && typeof f.carpeta_id === 'string' && ID_DRIVE.test(f.carpeta_id) && typeof f.ruta === 'string' && !PROTEGIDA(f.ruta))\n    .map((f) => ({ json: { vaciar: { id: f.id, carpeta_id: f.carpeta_id, ruta: f.ruta } } }));\n}\n\n// --- Pegamento con n8n ---\nreturn prepararVaciado($input.all().map((i) => i.json));\n"
+      },
+      "id": "d71e7e00-0021-4000-8000-000000000021",
+      "name": "Preparar vaciado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "method": "GET",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files?pageSize=1&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=' + encodeURIComponent('nextPageToken,files(id)') + '&q=' + encodeURIComponent(\"'\" + $json.vaciar.carpeta_id + \"' in parents and trashed = false\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api"
+      },
+      "id": "d71e7e00-0022-4000-8000-000000000022",
+      "name": "Mirar si está vacía",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": null,
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo \"Decidir vaciado\" : con lo que contestó Drive al listar el contenido de cada carpeta («Mirar si está vacía», en el mismo orden\n// que «Preparar vaciado»), deja pasar SOLO las que están vacías de verdad (ni archivos ni carpetas, tampoco lo subido a mano). Las que tienen algo\n// se quedan pendientes (la base de datos las cierra a los 30 minutos); si Drive falla, se reintenta en la pasada siguiente.\n\nfunction decidirVaciado(preparados, listados) {\n  const salida = [];\n  preparados.forEach((p, i) => {\n    const r = listados[i] ?? {};\n    const ok = !r.error && r.statusCode >= 200 && r.statusCode < 300 && Array.isArray(r.body?.files);\n    if (ok && r.body.files.length === 0 && !r.body.nextPageToken) salida.push({ json: { vaciar: p.vaciar } });\n  });\n  return salida;\n}\n\n// --- Pegamento con n8n ---\nreturn decidirVaciado($('Preparar vaciado').all().map((i) => i.json), $input.all().map((i) => i.json));\n"
+      },
+      "id": "d71e7e00-0023-4000-8000-000000000023",
+      "name": "Decidir vaciado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "method": "PATCH",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent($json.vaciar.carpeta_id) + '?supportsAllDrives=true' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ trashed: true }) }}"
+      },
+      "id": "d71e7e00-0024-4000-8000-000000000024",
+      "name": "Vaciar en Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": null,
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.config.supabase_url }}/rest/v1/rpc/vaciado_hecho",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_id: $json.statusCode >= 200 && $json.statusCode < 300 ? $('Decidir vaciado').item.json.vaciar.id : '00000000-0000-0000-0000-000000000000', p_resultado: 'papelera' }) }}"
+      },
+      "id": "d71e7e00-0025-4000-8000-000000000025",
+      "name": "Anotar vaciado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        900
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": null,
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## ⑥ Vaciar carpetas (base de datos 1.5)\nCuando mueves los archivos de una carpeta a otra (o juntas dos), la de origen se apunta para vaciar. Aquí, si ya no tiene ningún archivo registrado dentro, **Mirar si está vacía** lo comprueba **en Drive** (también lo subido a mano) y solo entonces va a la papelera (se recupera desde Drive). **Entrada y Notas nunca se vacían.** Lo que sigue con algo dentro se deja (a los 30 minutos se da por cerrado).",
+        "height": 200,
+        "width": 1440,
+        "color": 6
+      },
+      "id": "d71e7e00-0107-4000-8000-000000000107",
+      "name": "Nota 7",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ① Disparo y configuración\nSe ejecuta **cada 10 segundos** (Programación) o a mano (Disparador manual). Las ejecuciones que salen bien **no se guardan** (serían más de 8.000 al día y n8n borraría el historial de los demás flujos); las que fallan, sí.\n**Configuración**: el único sitio con valores a mano (URL de Supabase, ID de la carpeta \"Secretaria\", lote).",
         "height": 200,
         "width": 480,
         "color": 4
@@ -358,9 +648,9 @@
     },
     {
       "parameters": {
-        "content": "## ② Pendientes\nLee los archivos marcados `drive_pendiente` (lo marcan triggers de la base de datos al asignar un archivo a un item, al pedir o cambiar su carpeta, o al cambiar su nombre). Lee también las **carpetas pedidas** (`carpetas_pedidas`: \"crea la carpeta Proyectos dentro de Trabajo\"). Si no hay ningún archivo ni carpeta pendiente, el flujo termina aquí.",
+        "content": "## ② Pendientes\nLee los archivos marcados `drive_pendiente` (lo marcan triggers de la base de datos al asignar un archivo a un item, al pedir o cambiar su carpeta, al cambiar su nombre o al cambiar el tipo del item). Lee también las **carpetas pedidas** (`carpetas_pedidas`: \"crea la carpeta Proyectos dentro de Trabajo\"). Si no hay ningún archivo ni carpeta pendiente, el flujo termina en **Hay trabajo**. Si hay algo, **Tomar turno** (base de datos 1.5) deja seguir a una sola ejecución a la vez y **Soltar turno**, al final, lo suelta.",
         "height": 200,
-        "width": 480,
+        "width": 1180,
         "color": 5
       },
       "id": "d71e7e00-0102-4000-8000-000000000102",
@@ -384,13 +674,13 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        920,
+        1640,
         -420
       ]
     },
     {
       "parameters": {
-        "content": "## ④ Planificar y mover\n**Planificar** decide el destino: la **carpeta pedida** por el usuario (`Fotos`, `Fotos/Viajes`) manda; si no hay, `Notas` (archivos de un elemento). Mueve, crea las carpetas que falten (un nivel por pasada; el archivo se mueve en la siguiente), renombra si cambió el nombre o limpia la marca si no hay nada que hacer. Una **carpeta pedida** sin archivos se crea nivel a nivel y, cuando existe entera, se anota (`carpeta_lista`).",
+        "content": "## ④ Planificar y mover\n**Planificar** decide el destino: la **carpeta pedida** por el usuario (`Fotos`, `Fotos/Viajes`) manda; si no hay, `Notas`. Mueve, crea las carpetas que falten (un nivel por pasada de 10 s; el archivo se mueve en la siguiente), renombra si cambió el nombre o limpia la marca si no hay nada que hacer. Una **carpeta pedida** sin archivos se crea nivel a nivel y, cuando existe entera, se anota (`carpeta_lista`).",
         "height": 200,
         "width": 480,
         "color": 3
@@ -400,7 +690,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1880,
+        2600,
         -420
       ]
     },
@@ -416,13 +706,13 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2360,
+        3080,
         -420
       ]
     },
     {
       "parameters": {
-        "content": "## Antes de ejecutar\n1. Elige la credencial **Google Drive OAuth2 API** (con el alcance completo `drive`, no `drive.file`) en *Leer padres*, *Listar nivel 1*, *Listar nivel 2*, *Listar nivel 3* y *Google Drive*, y la **Supabase API** en *Leer pendientes*, *Leer carpetas pendientes* y *Escribir en Supabase*.\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Bajo \"Secretaria\" debe existir la carpeta `Entrada` (donde llegan los archivos); las demás (`Notas` y las que pida el usuario) se crean solas.\n4. Publica el flujo para que se ejecute cada minuto.",
+        "content": "## Antes de ejecutar\n1. Elige la credencial **Google Drive OAuth2 API** (con el alcance completo `drive`, no `drive.file`) en *Leer padres*, *Listar nivel 1*, *Listar nivel 2*, *Listar nivel 3*, *Google Drive*, *Mirar si está vacía* y *Vaciar en Drive*, y la **Supabase API** en *Leer pendientes*, *Leer carpetas pendientes*, *Tomar turno*, *Leer carpetas creadas*, *Escribir en Supabase*, *Soltar turno*, *Leer carpetas por vaciar* y *Anotar vaciado*. Antes, la base de datos al día (`supabase/instalar.sql`, o los `supabase/actualizar-*.sql` que te falten).\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Bajo \"Secretaria\" debe existir la carpeta `Entrada` (donde llegan los archivos); las demás (`Notas` y las que pida el usuario) se crean solas.\n4. Publica el flujo para que se ejecute cada 10 segundos.",
         "height": 300,
         "width": 720,
         "color": 2
@@ -467,6 +757,11 @@
             "node": "Leer pendientes",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Leer carpetas por vaciar",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -483,6 +778,39 @@
       ]
     },
     "Leer carpetas pendientes": {
+      "main": [
+        [
+          {
+            "node": "Hay trabajo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay trabajo": {
+      "main": [
+        [
+          {
+            "node": "Tomar turno",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tomar turno": {
+      "main": [
+        [
+          {
+            "node": "¿Tengo turno?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Tengo turno?": {
       "main": [
         [
           {
@@ -541,6 +869,17 @@
       "main": [
         [
           {
+            "node": "Leer carpetas creadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer carpetas creadas": {
+      "main": [
+        [
+          {
             "node": "Planificar",
             "type": "main",
             "index": 0
@@ -580,12 +919,81 @@
           }
         ]
       ]
+    },
+    "Escribir en Supabase": {
+      "main": [
+        [
+          {
+            "node": "Soltar turno",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer carpetas por vaciar": {
+      "main": [
+        [
+          {
+            "node": "Preparar vaciado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar vaciado": {
+      "main": [
+        [
+          {
+            "node": "Mirar si está vacía",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mirar si está vacía": {
+      "main": [
+        [
+          {
+            "node": "Decidir vaciado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir vaciado": {
+      "main": [
+        [
+          {
+            "node": "Vaciar en Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vaciar en Drive": {
+      "main": [
+        [
+          {
+            "node": "Anotar vaciado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "pinData": {},
   "settings": {
     "executionOrder": "v1",
     "timezone": "Europe/Madrid",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
     "errorWorkflow": "secretariaAvisoF"
   }
 }

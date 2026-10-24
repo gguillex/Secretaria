@@ -13,10 +13,17 @@ const carpetas = preparados.filter((p) => p.carpeta).map((p) => p.carpeta);
 const padres = $('Leer padres').all().map((i) => i.json);
 // Un listado por nivel de carpetas (hijas de la raíz, de esas y de esas): cada uno con la respuesta completa
 const niveles = ['Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3'].map((nodo) => $(nodo).first().json);
+// Las carpetas creadas en las pasadas de los últimos 60 s (base de datos 1.5): sin actualizar la base de datos a la 1.5 la lectura falla y no hay ninguna
+let recientes = [];
+try {
+  recientes = $('Leer carpetas creadas').all().map((i) => i.json).filter((r) => r && typeof r.drive_id === 'string');
+} catch (e) {
+  recientes = [];
+}
 
 let plan;
 try {
-  plan = planificarAcciones({ archivos, carpetas, padres, raizId: config.carpeta_raiz_id, niveles });
+  plan = planificarAcciones({ archivos, carpetas, padres, raizId: config.carpeta_raiz_id, niveles, recientes });
 } catch (e) {
   // Sin el árbol de carpetas completo no se hace nada: crear carpetas "que faltan" podría duplicar las que existen
   throw new Error(`Sincronizar Drive: ${e.message} (revisa la credencial de Google Drive y CARPETA_RAIZ_ID)`);

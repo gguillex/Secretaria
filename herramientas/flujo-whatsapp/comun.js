@@ -224,10 +224,23 @@ const MENSAJE_ARCHIVOS_GUARDADOS = (nombres) => {
   return `Guardados ${lista.length} archivos:\n${visibles.join('\n')}${mas}\n¿Qué son o en qué carpeta los guardo?`;
 };
 
+// Cuatro caracteres sacados del id del mensaje de WhatsApp : dos fotos del mismo minuto se llamaban igual y no se podían distinguir
+// («mueve <nombre> a Notas» movía las dos). FNV-1a de 32 bits en base 36: el mismo mensaje da siempre el mismo sufijo.
+function sufijoNombre(waMessageId) {
+  if (typeof waMessageId !== 'string' || waMessageId === '') return '';
+  let h = 0x811c9dc5;
+  for (let i = 0; i < waMessageId.length; i++) {
+    h ^= waMessageId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (h % 1679616).toString(36).padStart(4, '0');
+}
+
 // Decide qué hacer con un adjunto a partir de los datos que devuelve la API de Meta (GET /{media_id}).
 //   entrada    { tipo_entrada, filename, caption, mime_type, ... } del webhook
 //   metadatos  respuesta de Meta { url, mime_type, file_size, id } o { error }
-//   ahora      fecha y hora de Madrid con formato "2026-10-12 1830", para el nombre de las fotos
+//   ahora      fecha y hora de Madrid con formato "2026-10-12 1830", para el nombre de las fotos (más un sufijo del id del mensaje:
+//              "2026-10-12 1830 · WhatsApp k3f9.jpg")
 //   limiteMb   tamaño máximo en MB
 // Devuelve { ok: true, media_url, mime_type, nombre, tamano } o { ok: false, texto, motivo }.
 function planificarAdjunto({ entrada, metadatos, ahora, limiteMb }) {
@@ -241,7 +254,10 @@ function planificarAdjunto({ entrada, metadatos, ahora, limiteMb }) {
   const bytes = Number(r.file_size);
   if (Number.isFinite(bytes) && bytes > limiteMb * 1048576) return { ok: false, texto: MENSAJE_ADJUNTO_GRANDE(bytes, limiteMb), motivo: 'demasiado grande' };
   let nombre = e.tipo_entrada === 'documento' ? nombreSeguro(e.filename) : '';
-  if (!nombre) nombre = `${ahora} · WhatsApp.${ext}`;
+  if (!nombre) {
+    const sufijo = sufijoNombre(e.wa_message_id);
+    nombre = `${ahora} · WhatsApp${sufijo ? ` ${sufijo}` : ''}.${ext}`;
+  }
   else if (!/\.[A-Za-z0-9]{1,5}$/.test(nombre)) nombre += `.${ext}`;
   return { ok: true, media_url: r.url, mime_type: mime, nombre, tamano: Number.isFinite(bytes) ? bytes : null };
 }
