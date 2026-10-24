@@ -1,7 +1,8 @@
 # Prompt del clasificador
 
-[`clasificador.md`](clasificador.md) es el prompt que recibe Gemini en el nodo `Construir petición` del flujo «Procesar mensaje».
-Se inserta en el flujo al generarlo (`npm run generar`): no se edita en el JSON de `flujos/`.
+[`clasificador-v13.md`](clasificador-v13.md) es el prompt que recibe Gemini en el nodo `Construir petición` del flujo «Procesar mensaje»; la
+[`v12`](clasificador-v12.md) es la anterior y se elige con `VERSION_PROMPT` en la `Configuración` del flujo principal. La v13 sabe mover carpetas y
+archivos, contesta más corto y usa la conversación reciente. Se insertan en el flujo al generarlo (`npm run generar`): no se editan en el JSON de `flujos/`.
 
 - Pide **solo un JSON**: la intención (`guardar`, `consultar`, `corregir`, `completar`, `cancelar`, `aclarar`, `recordar`, `archivar`,
   `ver_archivos`, `crear_carpeta`…) y los elementos, con valores de listas cerradas. El código (`herramientas/flujo/planificar.js`)

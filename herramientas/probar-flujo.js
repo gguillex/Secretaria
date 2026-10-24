@@ -29,9 +29,10 @@ const { construirFlujo, codigoComandos } = require('./generar-flujo.js');
 const RAIZ = path.resolve(__dirname, '..');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const nodo = (f) => fs.readFileSync(path.join(__dirname, 'flujo', f), 'utf8').replace(/\r\n/g, '\n');
-const PROMPT_TRABAJO = fs.readFileSync(path.join(RAIZ, 'prompts', 'clasificador.md'), 'utf8').replace(/\r\n/g, '\n').trimEnd();
+const PROMPT_TRABAJO = fs.readFileSync(path.join(RAIZ, 'prompts', 'clasificador-v12.md'), 'utf8').replace(/\r\n/g, '\n').trimEnd();
+const PROMPT_V13 = fs.readFileSync(path.join(RAIZ, 'prompts', 'clasificador-v13.md'), 'utf8').replace(/\r\n/g, '\n').trimEnd();
 // "Construir petición" tal como la monta el generador: el prompt y la sección de comandos de planificar.js
-const codigoConstruir = () => nodo('construir-peticion.js').split('__PROMPT__').join(JSON.stringify(PROMPT_TRABAJO)).split('__COMANDOS__').join(codigoComandos());
+const codigoConstruir = () => nodo('construir-peticion.js').split('__PROMPTS__').join(JSON.stringify({ v12: PROMPT_TRABAJO, v13: PROMPT_V13 })).split('__COMANDOS__').join(codigoComandos());
 
 const CONFIG = {
   modelo: 'gemini-3.8-flash',
@@ -3620,6 +3621,14 @@ async function main() {
     // La nota de la conversación es EXACTAMENTE la que mide la evaluación (caso 252): si no, la medida no valdría para el flujo
     const c10 = await montarCP('no, a Pedro', { conversacion: [{ wa_message_id: 'wa-9', tipo_entrada: 'texto', texto_original: 'apunta llamar a Juan mañana', respuesta_texto: '✅ Llamar a Juan', created_at: '2026-10-23T13:08:00.000Z' }], config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
     afirmar('la nota de la conversación coincide con la de la evaluación', c10.cuerpo.contents.at(-1).parts[0].text === '[Conversación reciente, de la más antigua a la más nueva. Es solo contexto y ya está resuelta: no repitas nada de lo que se hizo ni lo vuelvas a guardar. Úsala solo si el mensaje nuevo corrige algo de ella («no, quiero que…»), la continúa o se refiere a algo que se dijo.\n• 15:08 Usuario: «apunta llamar a Juan mañana» → Tú: «✅ Llamar a Juan»]\nno, a Pedro', c10.cuerpo.contents.at(-1).parts[0].text);
+    // VERSION_PROMPT: v13 por defecto, v12 si se elige
+    const sis13 = (x) => x.cuerpo.systemInstruction.parts[0].text;
+    afirmar('sin VERSION_PROMPT (Configuración antigua) se usa la v12', !sis13(await montarCP('hola')).includes('37. Mover en Drive'));
+    afirmar('con VERSION_PROMPT = v13 se usa la v13', sis13(await montarCP('hola', { config: { ...CONFIG, version_prompt: 'v13' } })).includes('37. Mover en Drive'));
+    await lanza('una versión que no existe es un error claro', montarCP('hola', { config: { ...CONFIG, version_prompt: 'v99' } }), 'no existe el prompt v99');
+    const cfgNodo = nodo('configuracion.js').replace('TU-PROYECTO', 'abcdefgh').replace('TU-ID-DE-SECRETARIA', '1AbCdEfGhIjKlMnOpQr');
+    afirmar('Configuración: VERSION_PROMPT viene en v13', (await correr(cfgNodo))[0].config.version_prompt === 'v13');
+    await lanza('Configuración: VERSION_PROMPT solo admite v12 o v13', correr(cfgNodo.replace("const VERSION_PROMPT = 'v13';", "const VERSION_PROMPT = 'v11';")), 'VERSION_PROMPT');
 
     // Los nodos nuevos
     const fl = construirFlujo();

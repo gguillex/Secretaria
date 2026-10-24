@@ -1,8 +1,11 @@
 // Nodo "Construir petición": monta el cuerpo de la llamada a Gemini.
-// El prompt se inserta al generar el flujo desde prompts/clasificador.md; no editar aquí.
-const PROMPT = __PROMPT__;
+// Los prompts se insertan al generar el flujo desde prompts/clasificador-v12.md y -v13.md; no editar aquí. Cuál se usa lo dice VERSION_PROMPT
+// en la Configuración; sin ese valor (Configuración antigua), la v12.
+const PROMPTS = __PROMPTS__;
 
 const config = $('Configuración').first().json.config;
+const PROMPT = PROMPTS[config.version_prompt || 'v12'];
+if (!PROMPT) throw new Error(`Construir petición: no existe el prompt ${config.version_prompt} (usa ${Object.keys(PROMPTS).join(' o ')})`);
 // El mensaje que se procesa: uno solo o varios seguidos que el flujo de WhatsApp ya ha juntado (cola de la base de datos)
 const entrada = $('Entrada').first().json;
 

@@ -23,7 +23,7 @@ Cómo está hecha la secretaria y por qué. Para instalarla, el [manual](manual-
 ## Flujos de n8n
 
 Los JSON de [`flujos/`](../flujos/) son **generados** (`npm run generar`): el código de cada nodo vive en `herramientas/flujo*/` y
-el prompt en [`prompts/clasificador.md`](../prompts/clasificador.md). Cada flujo lleva un id fijo, sus credenciales referenciadas por
+los prompts en [`prompts/`](../prompts/) (`clasificador-v13.md` en uso, `-v12.md` la anterior). Cada flujo lleva un id fijo, sus credenciales referenciadas por
 nombre y «Aviso de fallos» como *Error workflow* (`herramientas/comun/importacion.js`).
 
 | Flujo | Disparo | Qué hace |

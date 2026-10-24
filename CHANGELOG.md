@@ -8,7 +8,7 @@ Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer p
 
 - **Mover archivos con tus palabras:** «mueve las fotos de Budapest a Viajes/Budapest», «mueve todo lo de Notas a Viajes», un archivo por
   su nombre («mueve 2026-10-23 1504 · WhatsApp.jpg a Notas») o «mueve esos archivos» (los del último movimiento o guardado). Se reconoce
-  por código, sin el modelo, también por voz.
+  por código, sin el modelo (con la v12) o con él (v13), también por voz.
 - **La carpeta que se queda vacía va a la papelera** al mover todos sus archivos (solo si Drive confirma que no queda nada, ni lo subido a
   mano). Nunca `Entrada` ni `Notas`.
 - **«Déjalo como estaba»:** justo después de mover archivos los devuelve a su carpeta y anula el vaciado.
@@ -19,6 +19,9 @@ Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer p
 - **Memoria de la conversación:** el modelo ve tus últimos mensajes (5, de las dos últimas horas) y lo que se te contestó, para entender
   «no, quiero que…». Se ajusta con `MEMORIA_MENSAJES` y `MEMORIA_MIN` en la configuración del flujo principal (0 la apaga).
 - **Un solo aviso para varias fotos seguidas**, ahora activado (`ESPERA_ARCHIVOS_S = 4`; con 0 vuelve un aviso por archivo).
+- **Prompt v13** (nuevo, en `prompts/clasificador-v13.md`): el modelo sabe mover carpetas y archivos, contesta más corto y entiende la
+  conversación reciente. Es el que se usa por defecto. No está medido con la evaluación del clasificador frente a la v12; si ves que
+  clasifica peor, pon `VERSION_PROMPT = 'v12'` en la configuración del flujo principal, genera e importa de nuevo.
 - **Fotos con nombre único:** fecha, hora y un sufijo corto, para que dos del mismo minuto no se llamen igual.
 
 ### Cambios

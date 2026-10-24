@@ -23,6 +23,8 @@ const CARPETA_RAIZ_ID = delEntorno('DRIVE_CARPETA_RAIZ_ID', 'TU-ID-DE-SECRETARIA
 // modelo: si Gemini no lo acepta, el mensaje falla con un error claro y basta con volver a ''. Puede bajar la calidad: mídelo con la
 // evaluación (su NIVEL_RAZONAMIENTO) antes de dejarlo puesto.
 const NIVEL_RAZONAMIENTO = '';
+// Versión del prompt: 'v12' o 'v13' (sabe mover carpetas y archivos, contesta más corto y usa la conversación reciente).
+const VERSION_PROMPT = 'v13';
 // Minutos que un item espera un archivo que lo acompañe ("te mando un documento con la nota")
 const ESPERA_MIN = 15;
 // Minutos que una pregunta de la secretaria espera respuesta. Pasado ese tiempo, un mensaje nuevo ya no se
@@ -40,6 +42,9 @@ if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SUPABASE_URL) || SUPABASE_U
 }
 if (!/^[A-Za-z0-9_-]{10,100}$/.test(CARPETA_RAIZ_ID) || CARPETA_RAIZ_ID.includes('TU-ID')) {
   throw new Error('Configuración: pon el ID de la carpeta Secretaria de Drive en CARPETA_RAIZ_ID (el último trozo de su URL). Va en el .env del servidor (DRIVE_CARPETA_RAIZ_ID=…, y después docker compose up -d)');
+}
+if (!['v12', 'v13'].includes(VERSION_PROMPT)) {
+  throw new Error("Configuración: VERSION_PROMPT debe ser 'v12' o 'v13'");
 }
 if (!['', 'minimal', 'low', 'medium', 'high'].includes(NIVEL_RAZONAMIENTO)) {
   throw new Error("Configuración: NIVEL_RAZONAMIENTO debe ser '', 'minimal', 'low', 'medium' o 'high'");
@@ -67,6 +72,7 @@ return [
         carpeta_raiz_id: CARPETA_RAIZ_ID,
         espera_min: ESPERA_MIN,
         caducidad_min: CADUCIDAD_MIN,
+        version_prompt: VERSION_PROMPT,
         memoria_mensajes: MEMORIA_MENSAJES,
         memoria_min: MEMORIA_MIN,
       },

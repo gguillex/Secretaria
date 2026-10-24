@@ -1,6 +1,6 @@
 // Genera flujos/procesar-mensaje.json (el flujo real) a partir de:
 //   - herramientas/flujo/*.js   código de los nodos Code
-//   - prompts/clasificador.md   prompt de trabajo
+//   - prompts/clasificador-v12.md y -v13.md   prompts de trabajo (VERSION_PROMPT en la Configuración elige uno)
 // Uso: node herramientas/generar-flujo.js
 // Solo escribe el flujo de salida; no modifica ningún otro archivo.
 //
@@ -140,7 +140,7 @@ const ORDEN = [
 const x = (nombre) => ORDEN.indexOf(nombre) * PASO;
 
 function construirFlujoBase() {
-  const prompt = leer(ruta('prompts', 'clasificador.md')).trimEnd();
+  const prompts = { v12: leer(ruta('prompts', 'clasificador-v12.md')).trimEnd(), v13: leer(ruta('prompts', 'clasificador-v13.md')).trimEnd() };
 
   const nodos = [
     { parameters: {}, id: id(1), name: 'Disparador manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [x('Disparador manual'), 0] },
@@ -291,7 +291,7 @@ function construirFlujoBase() {
       { alwaysOutputData: true, onError: 'continueRegularOutput' },
     ),
     nodoCode(6, 'Construir petición', x('Construir petición'), 'construir-peticion.js', [
-      ['__PROMPT__', JSON.stringify(prompt)],
+      ['__PROMPTS__', JSON.stringify(prompts)],
       ['__COMANDOS__', codigoComandos()],
     ]),
     // Un comando, una frase fija («cómo te llamas», «qué tengo hoy») o la primera pregunta del nombre los resuelve "Planificar" sin el
@@ -584,7 +584,7 @@ function construirFlujoBase() {
     // Notas de sección: cada una cubre las columnas de sus nodos
     nota(101, x('Configuración') - 40, PASO * 2, 4, '## ① Entrada y configuración\n**Configuración**: el único sitio con valores a mano (modelo, URL de Supabase, espera de archivo).\n**Entrada**: contrato con el núcleo (`mensaje`, `fecha_actual`, `wa_message_id`, `tipo_entrada`). Lee la llamada del flujo de WhatsApp (nodo **Al ser llamado**) o, en una prueba manual, la constante `MENSAJE`.'),
     nota(102, x('Guardar mensaje') - 40, PASO * 3, 5, '## ② Contexto\nEl mensaje se guarda **antes** de nada (si viene de WhatsApp ya estaba en la cola: se completa su fila): si algo falla después, no se pierde.\nLuego se leen la memoria (términos y datos que el usuario ha contado; /memory la enseña), los archivos recibidos (a1, a2… y, si el usuario respondió a una foto o a su confirmación, cuál es), todos los items pendientes (el modelo se refiere a ellos con `i1`, `i2`… al corregir o completar) y la **pregunta pendiente** reciente, si la hay: su hilo se devuelve al modelo para que entienda la respuesta.'),
-    nota(103, x('Construir petición') - 40, PASO * 2, 6, '## ③ Modelo\nPrompt de `prompts/clasificador.md`, temperatura 0, salida JSON.\nLos comandos y frases fijas (/help, /memory, «cómo te llamas», «qué tengo hoy») y el «sí»/«no» de las confirmaciones se saltan el modelo (**¿Hace falta el modelo?**).\n3 intentos con 5 s de espera. Un error no detiene el flujo: llega a Planificar como `{ error }`.'),
+    nota(103, x('Construir petición') - 40, PASO * 2, 6, '## ③ Modelo\nPrompt de `prompts/clasificador-v13.md` (o la v12, según VERSION_PROMPT), temperatura 0, salida JSON.\nLos comandos y frases fijas (/help, /memory, «cómo te llamas», «qué tengo hoy») y el «sí»/«no» de las confirmaciones se saltan el modelo (**¿Hace falta el modelo?**).\n3 intentos con 5 s de espera. Un error no detiene el flujo: llega a Planificar como `{ error }`.'),
     nota(104, x('Planificar') - 40, PASO * 2, 3, '## ④ Decisión y escritura\n**Planificar** valida (tolerante) y decide qué escribir. Las referencias que cita el modelo deben ser de items pendientes.\n**Escribir en Supabase** ejecuta las escrituras en orden.\nSi el modelo no responde o falla una escritura, el mensaje queda con `procesado = false` y el motivo en `error`. Si su respuesta no encaja, queda procesado, con el motivo, y se contesta «no te he entendido». Con confianza < 0,7 no se guarda nada: se pregunta.'),
     nota(105, x('Leer consulta') - 40, PASO * 2, 7, '## ⑤ Respuesta\n**Leer consulta** solo trae datos si la intención es consultar.\n**¿Listar carpetas?**: con la lista de carpetas o al borrar en Drive lee el árbol (3 niveles) y los archivos registrados. **Revisar Drive** propone qué se borraría o, tras el «sí», lo comprueba otra vez; solo eso va a **Mandar a la papelera** (recuperable ~30 días) y **Marcar borrado** lo anota. Para **mover una carpeta dentro de otra**, **Revisar Drive** la busca en el árbol real y decide (no se mueven Entrada ni Notas; máximo 3 niveles); **¿Mover carpeta?** → **¿Hay carpetas que mover?** → **¿Crear carpeta primero?** → **Crear en Drive** → **Preparar movimientos** → **¿Mover carpeta?** → **Mover en Drive** → **Anotar movimiento** (reescribe las rutas de la base de datos). **Resultado** redacta la lista (solo lo pendiente), el árbol de carpetas o un mensaje honesto si algo falló. Una entrada de `mensajes` por mensaje de WhatsApp.'),
     nota(
