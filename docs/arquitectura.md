@@ -152,6 +152,12 @@ suyo. Un mensaje que no llegó a guardarse deja de hacer esperar al cabo de 1 mi
   cada lista y cada proyecto, con cuántos elementos tiene cada una); con esa pregunta abierta, el nombre de una sección es esa
   sección. Quitar una o varias secciones («borra las alarmas y las tareas»), varios elementos o una cosa concreta se hace sin
   preguntar y la respuesta dice lo que se quitó.
+- **Quitar solo de la sección nombrada:** si el mensaje nombra una sola sección («borra lo demás en tareas»), lo que elige el modelo se
+  filtra por código: solo se toca lo que sale en esa sección del listado. Lo de fuera (por ejemplo, una tarea de un proyecto) no se
+  toca y se dice.
+- **Dos peticiones en un mensaje:** un mensaje suelto que trae órdenes claras de al menos dos clases distintas («apunta comprar pan y
+  dime qué tengo hoy») se parte por código en el flujo de WhatsApp; cada parte se procesa aparte, en orden, con su respuesta. El modelo
+  sabe qué se pidió antes en el mismo mensaje. No parte listas con viñetas, mensajes muy largos ni trozos que no empiezan por una orden.
 - **Deshacer:** quitar o completar anota cuándo (`items.quitado_en`). «Deshaz» recupera el último lote quitado (lo de la última orden,
   hasta 24 horas atrás) y «recupera la tarea del banco» lo que encaje con esas palabras; si el elemento era de un proyecto cerrado,
   lo reabre. Sin modelo.

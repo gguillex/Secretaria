@@ -273,7 +273,11 @@ const todas = $('Leer pregunta pendiente')
   .all()
   .map((i) => i.json)
   .filter((r) => r && typeof r.id === 'string' && Array.isArray(r.hilo) && typeof r.pregunta === 'string');
-const abiertas = todas.filter((r) => hiloCoherente(r.hilo));
+// La 2.ª (3.ª…) petición de un mismo mensaje  no contesta a una pregunta que hizo la 1.ª: se escribió antes de que existiera
+const esParte = Number.isInteger(entrada.parte) && entrada.parte > 1;
+const recibidoParte = Date.parse(entrada.recibido_at ?? '');
+const hechaDespues = (r) => esParte && Number.isFinite(recibidoParte) && Date.parse(r.hilo.at(-1)?.en ?? '') > recibidoParte;
+const abiertas = todas.filter((r) => hiloCoherente(r.hilo) && !hechaDespues(r));
 // Responder citando CUALQUIER respuesta de la secretaria (base de datos 1.4): el flujo de WhatsApp anota en el mensaje del usuario los
 // ids de lo que se le contestó, y aquí se busca por el id del mensaje citado. Si la respuesta citada dejó una pregunta abierta (aunque ya
 // haya caducado o haya otras más recientes), el mensaje contesta a ésa; si no, el modelo recibe delante qué dijo la secretaria. Sin actualizar la base de datos a la 1.4
@@ -304,7 +308,7 @@ const reciente24h = Number.isFinite(edadCitadaMs) && edadCitadaMs < 24 * 3600 * 
 const sigueVigente = !String(motivoCitada).startsWith('confirmar_') || edadCitadaMs < (Number.isFinite(config.caducidad_min) ? config.caducidad_min : 30) * 60000;
 const preguntaCitada = candidataCitada && reciente24h && sigueVigente && (!esOrdenNueva(entrada.mensaje) || elegirPregunta(entrada.mensaje, [candidataCitada]) !== null) ? candidataCitada : null;
 // Si la única pregunta abierta tiene el hilo dañado, se ignora el hilo pero la pregunta se cierra igualmente
-const pendiente = preguntaCitada ?? elegirPregunta(entrada.mensaje, abiertas) ?? (abiertas.length === 0 ? (todas[0] ?? null) : null);
+const pendiente = preguntaCitada ?? elegirPregunta(entrada.mensaje, abiertas) ?? (abiertas.length === 0 ? (todas.find((r) => !hechaDespues(r)) ?? null) : null);
 const hiloPrevio = pendiente && hiloCoherente(pendiente.hilo) ? pendiente.hilo : [];
 const preguntaPendiente = hiloPrevio.length > 0 ? pendiente.pregunta : '';
 // Preguntas que el usuario ya había VISTO y deja sin contestar al mandar otra cosa: si este mensaje no contesta a ninguna
@@ -415,6 +419,10 @@ const notaConversacion = conversacion.length > 0
     .map((r) => `• ${fmtHoraConv.format(new Date(r.created_at))} Usuario: «${recortar(r.texto_original || ENTRADA_SIN_TEXTO[r.tipo_entrada] || '(sin texto)', 300)}» → Tú: «${recortarMedio(r.respuesta_texto, 300)}»`)
     .join('\n')}]\n`
   : '';
+// Lo que se pidió antes en el mismo mensaje : ya está hecho; esta es otra petición
+const notaParte = esParte && typeof entrada.antes_en_mensaje === 'string' && entrada.antes_en_mensaje.trim() !== ''
+  ? `[En el mismo mensaje, antes de esto, el usuario pidió (ya está hecho, no lo repitas): «${recortar(entrada.antes_en_mensaje, 300)}». Lo que sigue es otra petición.]\n`
+  : '';
 const notaAviso = avisoCitado.length > 0
   ? `[El usuario responde a tu aviso de: ${avisoCitado.map(describirCitado).join('; ')}. Si pide aplazarla, moverla o cambiarla, es un corregir de ${avisoCitado.length === 1 ? 'ese elemento' : 'uno de ellos'}.]\n`
   : '';
@@ -484,7 +492,7 @@ return [
         systemInstruction: { parts: [{ text: sistema }] },
         contents: [
           ...hiloPrevio.map((t) => ({ role: t.rol, parts: [{ text: t.texto }] })),
-          { role: 'user', parts: [{ text: `${notaConversacion}${notaAviso}${notaArchivos}${notaCitada}${notaOferta}${entrada.mensaje}` }] },
+          { role: 'user', parts: [{ text: `${notaConversacion}${notaParte}${notaAviso}${notaArchivos}${notaCitada}${notaOferta}${entrada.mensaje}` }] },
         ],
         generationConfig: {
           temperature: 0,

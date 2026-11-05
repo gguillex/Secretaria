@@ -824,6 +824,29 @@ async function main() {
     const cuerpoPie = await correr(nodo('juntar-mensajes.js', true), { input: [{ accion: 'procesar', mensajes: [{ ...pie(1, '   ') }] }], nodos: { Configuración: [CONF] } }).then(() => 'sin error', (e) => e.message);
     afirmar('un pie vacío no se procesa (error claro, nunca un mensaje en blanco)', String(cuerpoPie).includes('no tienen texto'), String(cuerpoPie));
 
+    // Dos peticiones distintas en un mensaje : cada una aparte, en orden, con su respuesta
+    const sep = new Function('require', `${COMUN}\nreturn separarPeticiones;`)(require);
+    for (const [frase, esperado] of [
+      ['Apunta comprar pan y dime qué tengo hoy', ['Apunta comprar pan', 'dime qué tengo hoy']],
+      ['apunta comprar pan, leche y huevos y dame todo', ['apunta comprar pan, leche y huevos', 'dame todo']],
+      ['Borra la cita del dentista. Apunta llamar al banco el lunes', ['Borra la cita del dentista', 'Apunta llamar al banco el lunes']],
+      ['apunta pan\ndame las citas', ['apunta pan', 'dame las citas']],
+      ['¿Qué tengo hoy? Y apunta llamar a mamá', ['¿Qué tengo hoy?', 'apunta llamar a mamá']],
+      ['Mueve todo lo de notas a Budapest y además dame la jerarquía', ['Mueve todo lo de notas a Budapest', 'dame la jerarquía']],
+      ['borra la tarea del banco, apunta llamar a Pepe y dame todo', ['borra la tarea del banco', 'apunta llamar a Pepe', 'dame todo']],
+    ]) afirmar(`separar «${frase.replace('\n', ' / ')}»: ${esperado.length} peticiones`, JSON.stringify(sep(frase)) === JSON.stringify(esperado), JSON.stringify(sep(frase)));
+    for (const frase of ['compra leche y huevos', 'Recuérdame llamar a Juan mañana a las 5', 'Apunta dentista el jueves. Pon que es a las 10', 'apunta X y también apunta Y', 'recuérdame que mueva el coche', 'dime qué tengo hoy y mañana', 'Hola, ¿qué tal? Apunta pan', '•  Hacer solicitud de beca\nEsto es lo único que me queda por hacer en tareas borra lo demás', 'Esto es lo único, borra lo demás']) {
+      afirmar(`no separar «${frase.replace('\n', ' / ')}» (no es claro o es una sola petición)`, sep(frase).length === 1 && sep(frase)[0] === frase.trim(), JSON.stringify(sep(frase)));
+    }
+    const [p1, p2] = await juntar([{ accion: 'procesar', mensajes: [{ id: 'd1', wa_message_id: 'wamid.d1', tipo_entrada: 'texto', texto: 'Apunta comprar pan y dime qué tengo hoy', created_at: '2026-11-05T10:00:00.000Z' }] }]);
+    afirmar('Juntar: un mensaje con dos peticiones sale en dos procesos, en orden', p1?.mensaje === 'Apunta comprar pan' && p2?.mensaje === 'dime qué tengo hoy' && p1.accion === 'procesar' && p2.accion === 'procesar', JSON.stringify([p1, p2]));
+    afirmar('… la primera con el id del mensaje y la segunda con «.p2»; las dos contestan al mensaje y comparten turno y hora de llegada', p1.wa_message_id === 'wamid.d1' && p2.wa_message_id === 'wamid.d1.p2' && p1.wa_ids.join() === 'wamid.d1' && p2.wa_ids.join() === 'wamid.d1,wamid.d1.p2' && p1.responde_a === 'wamid.d1' && p2.responde_a === 'wamid.d1' && p1.mensaje_id === p2.mensaje_id && p2.recibido_at === '2026-11-05T10:00:00.000Z');
+    afirmar('… la segunda sabe qué se pidió antes en el mismo mensaje (contexto para el modelo)', p2.parte === 2 && p2.partes === 2 && p2.antes_en_mensaje === 'Apunta comprar pan' && p1.parte === 1 && !('antes_en_mensaje' in p1 && p1.antes_en_mensaje));
+    const juntados2 = await juntar([{ accion: 'procesar', mensajes: [txt(1, 'apunta pan'), txt(2, 'y dime qué tengo hoy')] }]);
+    afirmar('Juntar: varios mensajes juntados no se parten (se procesan juntos a propósito, como siempre)', juntados2.length === 1 && !('parte' in juntados2[0]));
+    const piePartido = await juntar([{ accion: 'procesar', mensajes: [pie(1, 'ponla en Viajes y dame todo')] }]);
+    afirmar('Juntar: el pie de una foto no se parte', piePartido.length === 1);
+
     const cola = await correr(nodo('preparar-cola.js'), { input: [
       { mensaje: ' Dentista mañana ', wa_message_id: 'wamid.1', tipo_entrada: 'texto', contexto_id: 'wamid.foto' },
       { ok: true, mensaje: 'transcrito', wa_message_id: 'wamid.2', tipo_entrada: 'audio', contexto_id: '' },

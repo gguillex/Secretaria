@@ -1,6 +1,7 @@
 // Nodo "Entrada": frontera entre el origen del mensaje y el núcleo del flujo.
 // Contrato de salida (lo único que el núcleo espera): mensaje, fecha_actual, wa_message_id, tipo_entrada, contexto_id, recibido_at (o null) y, solo si el flujo de
-// WhatsApp juntó demasiados mensajes seguidos, demasiados (true) y aviso_demasiados (el texto con el que se contesta, sin procesar nada).
+// WhatsApp juntó demasiados mensajes seguidos, demasiados (true) y aviso_demasiados (el texto con el que se contesta, sin procesar nada). Si el
+// mensaje traía varias peticiones , parte (2, 3…) y antes_en_mensaje (lo que se pidió antes en el mismo mensaje, ya hecho).
 //
 // Dos orígenes:
 //   - Llamada desde el flujo "Secretaria · WhatsApp": el nodo "Al ser llamado" trae { mensaje, wa_message_id, tipo_entrada }.
@@ -36,7 +37,10 @@ if (llamada && typeof llamada === 'object' && Object.keys(llamada).length > 0) {
   const demasiados = llamada.demasiados === true && typeof llamada.aviso_demasiados === 'string' && llamada.aviso_demasiados.trim() !== '';
   // Cuándo llegó (lo da la cola del flujo de WhatsApp): para saber si el usuario había visto una pregunta abierta
   const recibido_at = typeof llamada.recibido_at === 'string' && !Number.isNaN(Date.parse(llamada.recibido_at)) ? llamada.recibido_at : null;
-  return [{ json: { mensaje: texto, fecha_actual, wa_message_id: llamada.wa_message_id.trim(), tipo_entrada: tipo, contexto_id, recibido_at, ...(demasiados ? { demasiados: true, aviso_demasiados: llamada.aviso_demasiados.trim().slice(0, 500) } : {}) } }];
+  // Una de varias peticiones del mismo mensaje : cuál es y lo que se pidió antes en él
+  const parte = Number.isInteger(llamada.parte) && llamada.parte > 1 && llamada.parte <= 10 ? llamada.parte : null;
+  const antes = parte && typeof llamada.antes_en_mensaje === 'string' ? llamada.antes_en_mensaje.trim().slice(0, 500) : '';
+  return [{ json: { mensaje: texto, fecha_actual, wa_message_id: llamada.wa_message_id.trim(), tipo_entrada: tipo, contexto_id, recibido_at, ...(demasiados ? { demasiados: true, aviso_demasiados: llamada.aviso_demasiados.trim().slice(0, 500) } : {}), ...(parte ? { parte, antes_en_mensaje: antes } : {}) } }];
 }
 
 if (typeof MENSAJE !== 'string' || MENSAJE.trim() === '') {

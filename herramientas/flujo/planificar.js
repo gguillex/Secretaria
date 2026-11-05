@@ -392,6 +392,8 @@ function normalizarConsulta(c, config, avisos) {
     proyecto: textoONull(q.proyecto) ? normalizarProyecto(q.proyecto, config.proyectos, [], 'consulta.proyecto') : null,
     buscar: normalizarBuscar(q.buscar),
     completo: q.completo === true,
+    // «Dame todo» / /pending: sin citas ni alarmas ; solo lo ponen los atajos, no el modelo
+    sin_agenda: q.sin_agenda === true,
     estado,
     desde: aInstante(q.desde, 'consulta.desde', false),
     hasta: aInstante(q.hasta, 'consulta.hasta', true),
@@ -1003,7 +1005,7 @@ const COMANDOS = [
   ['about', 'Qué soy y para qué sirvo', 'aprender'],
   ['manual', 'Guía de uso por temas (/manual agenda, /manual archivos…)', 'aprender'],
   ['examples', 'Frases de ejemplo que entiendo', 'aprender'],
-  ['pending', 'Lo que tienes pendiente (/pending completo: con todo el detalle)', 'atajos'],
+  ['pending', 'Lo que tienes pendiente, sin citas ni alarmas (/pending completo: con todo el detalle)', 'atajos'],
   ['today', 'Lo de hoy', 'atajos'],
   ['files', 'Tus archivos y fotos, con su enlace', 'atajos'],
   ['folders', 'Tus carpetas de Drive', 'atajos'],
@@ -1142,7 +1144,9 @@ const MANUAL = {
       '• Quitar es inmediato y sin preguntar, y te digo lo que he quitado: una cosa, una sección, varias («borra las alarmas y las tareas») o todo («borra todo»).\n' +
       '• Si te equivocas: «deshaz» recupera lo último que quitaste (todo de una vez) y «recupera la tarea del banco» algo concreto de los últimos 7 días. Solo vale para lo que quitaste desde que existe el deshacer.\n' +
       '• Ver los detalles de algo: «qué apunté del casero», «enséñame el contenido de la tarea del banco».\n' +
-      '• Todo con todos los detalles: «dámelo todo completo» o /pending completo.\n' +
+      '• Dos cosas distintas en un mismo mensaje: «apunta comprar pan y dime qué tengo hoy», «borra la cita del dentista. Apunta llamar al banco». Te contesto a cada una por separado. Si no está claro que son dos, lo trato como una sola.\n' +
+      '• «Dame todo» (o /pending) es todo menos las citas y las alarmas, que van aparte: «dame las citas», «dame las alarmas» o /today. Con todos los detalles: «dámelo todo completo».\n' +
+      '• Si dices de qué sección es («esto es lo único que me queda en tareas, borra lo demás»), solo toco esa sección.\n' +
       '• Si no estoy segura de a cuál te refieres, te pregunto.\n' +
       '• Si te pregunto algo (por ejemplo «¿la apunto igualmente?») y me escribes otra cosa sin contestar, no apunto lo que estaba pendiente y te lo digo.\n' +
       '• Puedes responder citando cualquiera de mis mensajes (con texto o con un audio): así sé a cuál te refieres («cámbialo a las 6», «sí, apúntala»). Vale para los mensajes que te mande de ahora en adelante.',
@@ -1876,10 +1880,10 @@ function interpretarLectura(texto, ahora, nombre) {
   // «Pendientes» acompaña a otro tema sin cambiarlo («tareas pendientes», «lo de hoy pendiente»)
   if (temas.has('pendientes') && temas.size === 2) temas.delete('pendientes');
   const consulta = (extra = {}) => ({ tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', ...extra, ...(completo ? { completo: true } : {}) } } });
-  if (temas.size === 0) return todo || completo ? consulta() : null;
+  if (temas.size === 0) return todo || completo ? consulta({ sin_agenda: true }) : null;
   if (temas.size > 1) return null;
   const [tema] = temas;
-  if (tema === 'pendientes') return consulta();
+  if (tema === 'pendientes') return consulta({ sin_agenda: true });
   if (tema === 'hoy') {
     const hoy = diaMadrid((ahora ?? new Date()).getTime());
     return consulta({ desde: hoy, hasta: hoy });
@@ -1921,11 +1925,11 @@ function interpretarComando(mensaje, { ahora, nombre } = {}) {
     if (olvido) return { tipo: 'memoria', accion: 'olvidar', arg: olvido[1].trim() };
     if (FRASES_AYUDA.has(f)) return { tipo: 'texto', mensajes: [TEXTO_AYUDA], motivo: 'help' };
     if (FRASES_ABOUT.has(f)) return { tipo: 'texto', mensajes: textoAbout(nombre), motivo: 'about' };
-    if (FRASES_PENDIENTE.has(f)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente' } } };
+    if (FRASES_PENDIENTE.has(f)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', sin_agenda: true } } };
     const lista = LISTA_DE.exec(f);
     if (lista) return { tipo: 'atajo', datos: ATAJO_LISTA[lista[1]] };
-    if (FRASE_TODO_COMPLETO.test(` ${f}`)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', completo: true } } };
-    if (FRASE_TODO_SUELTO.test(` ${f}`)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente' } } };
+    if (FRASE_TODO_COMPLETO.test(` ${f}`)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', sin_agenda: true, completo: true } } };
+    if (FRASE_TODO_SUELTO.test(` ${f}`)) return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', sin_agenda: true } } };
     if (FRASES_HOY.has(f)) {
       const hoy = diaMadrid((ahora ?? new Date()).getTime());
       return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', desde: hoy, hasta: hoy } } };
@@ -1978,7 +1982,7 @@ function interpretarComando(mensaje, { ahora, nombre } = {}) {
     }
     case 'pending':
       // «/pending completo» (o full, todo, entero): con todo el detalle
-      return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', completo: /^(complet[oa]|full|todo|enter[oa]|detalle)$/.test(arg) } } };
+      return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', sin_agenda: true, completo: /^(complet[oa]|full|todo|enter[oa]|detalle)$/.test(arg) } } };
     case 'today': {
       const hoy = diaMadrid((ahora ?? new Date()).getTime());
       return { tipo: 'atajo', datos: { intencion: 'consultar', consulta: { estado: 'pendiente', desde: hoy, hasta: hoy } } };
@@ -2299,6 +2303,24 @@ function interpretarDeshacerMovimiento(mensaje) {
   if (!t || t.split(' ').length > 25) return false;
   return COMO_ESTABA.test(t) || DEVUELVE_SOLO.test(t) || interpretarDeshacer(mensaje)?.todo === true;
 }
+// Las secciones del listado : una tarea del día a día no es de un proyecto ni una alarma
+const esAlarmaDeListado = (r) => r.tipo === 'tarea' && Boolean(r.recordar_en) && !r.fecha_limite;
+const SECCIONES_LISTADO = {
+  tareas: (r) => r.tipo === 'tarea' && !esAlarmaDeListado(r) && !r.proyecto,
+  alarmas: (r) => esAlarmaDeListado(r),
+  citas: (r) => r.tipo === 'evento',
+};
+// La sección que nombra el mensaje, si nombra exactamente una y no habla de proyectos ni de un proyecto por su nombre
+function seccionNombrada(mensaje, proyectos = []) {
+  // Solo la orden: sin las líneas de una lista pegada («• Terminar trabajo del curso»), que son títulos y no dicen la sección
+  const orden = String(mensaje ?? '').split('\n').filter((l) => !/^\s*(?:[•·*\-–]|\d+[.)])/.test(l.replace(/[\u200B-\u200F\u2060-\u2064\uFEFF]/g, ''))).join(' ');
+  const t = ` ${sinSignos(orden)} `;
+  if (/ (?:proyectos?|examen|examenes) /.test(t)) return null;
+  if ((proyectos ?? []).some((p) => typeof p === 'string' && p.trim() && t.includes(` ${sinSignos(p)} `))) return null;
+  const nombradas = [[/ tareas? /, 'tareas'], [/ alarmas? /, 'alarmas'], [/ (?:citas?|eventos?) /, 'citas']].filter(([re]) => re.test(t)).map(([, s]) => s);
+  return nombradas.length === 1 ? nombradas[0] : null;
+}
+const proyectosDe = (config) => [...new Set([...(config?.proyectos ?? []), ...(config?.proyectos_activos ?? [])])];
 const claseDeQuitado = (r) => (r.tipo === 'evento' ? 'cita' : r.tipo === 'tarea' ? (r.recordar_en && !r.fecha_limite ? 'alarma' : 'tarea') : r.tipo === 'nota' ? 'nota' : r.tipo);
 // Devuelve { items } (lo que se recupera) o { texto } (nada que recuperar)
 function elegirParaDeshacer(pedido, quitados, ahora) {
@@ -3114,7 +3136,7 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
     meta.respuesta_usuario = textoCompraGuardada(datos.items, repetidosLista.repetidos, nombreLista);
     meta.confirmacion_codigo = true;
   }
-  // Sección 61: ya no se pregunta «¿te aviso para ir a comprar?». La compra va a su lista, con día o sin él.
+  // ya no se pregunta «¿te aviso para ir a comprar?». La compra va a su lista, con día o sin él.
 
   // Ayuda: lo pidió con palabras que no son un comando («no sé cómo usarte»). Se enseña la lista de comandos y no se toca nada (la pregunta pendiente sigue abierta).
   if (datos.intencion === 'ayuda') return ayudaFija([TEXTO_AYUDA]);
@@ -3281,6 +3303,19 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       return sinTocarNada(datos.intencion === 'cancelar' ? 'No encuentro nada pendiente que cancelar con eso.' : 'No encuentro nada pendiente que marcar como hecho con eso.');
     }
     if (datos.seleccion.filtro && pendientes.length >= MAX_PENDIENTES_VISTOS) avisos.push(`Solo se han mirado los ${MAX_PENDIENTES_VISTOS} elementos pendientes más recientes`);
+    // Si el mensaje nombra UNA sección («esto es lo único que me queda en tareas, borra lo demás»), solo se toca esa sección, como sale en el
+    // listado: el modelo había quitado también una tarea de un proyecto. Lo de fuera se dice.
+    const seccion = seccionNombrada(contexto.mensaje, proyectosDe(config));
+    // Solo cuando el modelo eligió elementos sueltos (ids): un filtro o varias secciones ya dicen qué sección es («borra las alarmas y la compra»)
+    if (seccion && !sel.filtro && !sel.filtros && ['cancelar', 'completar'].includes(datos.intencion)) {
+      const porId = new Map(pendientes.map((r) => [r.id, r]));
+      const fuera = selIds.filter((id) => porId.has(id) && !SECCIONES_LISTADO[seccion](porId.get(id)));
+      if (fuera.length > 0) {
+        selIds = selIds.filter((id) => !fuera.includes(id));
+        meta.fuera_de_seccion = { seccion, titulos: fuera.map((id) => porId.get(id).titulo).slice(0, 10) };
+        if (selIds.length === 0) return sinTocarNada(`No he tocado nada: lo que encaja no está en ${seccion === 'citas' ? 'tus citas' : seccion === 'alarmas' ? 'tus alarmas' : 'tus tareas'}.`);
+      }
+    }
   }
 
   // Proyectos: crear uno que ya existe no hace nada; cerrar uno que no existe se dice. Cerrar quita (archiva) lo que tenga pendiente.
@@ -3501,7 +3536,7 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
     meta.consulta_url = urlConsulta(base, q);
     // Con todo el detalle si lo pide el atajo o si el mensaje lo dice («qué tengo pendiente completo», «dámelo todo entero»)
     const completo = q.completo || pideCompleto(contexto.mensaje);
-    meta.consulta = { tipo: q.tipo, vista: q.vista, lista: q.lista, proyecto: q.proyecto, buscar: q.buscar, completo, estado: q.estado, con_rango: Boolean(q.desde || q.hasta), rango_texto: textoRango(q, ahora), limite: MAX_FILAS_CONSULTA };
+    meta.consulta = { tipo: q.tipo, vista: q.vista, lista: q.lista, proyecto: q.proyecto, buscar: q.buscar, completo, sin_agenda: q.sin_agenda === true, estado: q.estado, con_rango: Boolean(q.desde || q.hasta), rango_texto: textoRango(q, ahora), limite: MAX_FILAS_CONSULTA };
   }
   const cuerpoMensaje = { procesado: true, error: null };
   // Una charla que termina ofreciendo apuntar algo («¿quieres que te lo apunte como tarea?») deja la oferta abierta, con el hilo, para que el

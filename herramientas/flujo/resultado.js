@@ -104,8 +104,20 @@ function formatearLista(filas, consulta, ahora, archivos = []) {
   if (consulta.vista === 'tareas') rows = rows.filter((r) => !(r.tipo === 'tarea' && r.recordar_en && !r.fecha_limite));
 
   const hayFiltros = Boolean(consulta.tipo || consulta.vista || consulta.lista || consulta.proyecto || consulta.buscar || consulta.con_rango);
+  // «Dame todo» / /pending (sin_agenda): sin citas ni alarmas, que se piden aparte.
+  // «Qué tengo hoy», /today, «dame las citas» y el resumen de la mañana las siguen enseñando.
+  let ocultas = { citas: 0, alarmas: 0 };
+  if (consulta.sin_agenda === true && !hayFiltros && consulta.estado === 'pendiente') {
+    const esAgendaAlarma = (r) => r.tipo === 'tarea' && r.recordar_en && !r.fecha_limite;
+    ocultas = { citas: rows.filter((r) => r.tipo === 'evento').length, alarmas: rows.filter(esAgendaAlarma).length };
+    rows = rows.filter((r) => r.tipo !== 'evento' && !esAgendaAlarma(r));
+  }
+  const notaOcultas = ocultas.citas + ocultas.alarmas > 0
+    ? `Aparte tienes ${[ocultas.citas ? `${ocultas.citas} ${ocultas.citas === 1 ? 'cita' : 'citas'}` : '', ocultas.alarmas ? `${ocultas.alarmas} ${ocultas.alarmas === 1 ? 'alarma' : 'alarmas'}` : ''].filter(Boolean).join(' y ')}: «dame las ${ocultas.citas ? 'citas' : 'alarmas'}».`
+    : '';
   const deArchivos = !hayFiltros && consulta.estado === 'pendiente' ? bloqueArchivos(archivos) : null;
   if (rows.length === 0) {
+    if (notaOcultas) return [`No tienes nada más pendiente. ${notaOcultas}`, ...(deArchivos ? [deArchivos] : [])];
     if (deArchivos) return [deArchivos];
     // Sin filtros: nada pendiente. Solo un rango de fechas («qué tengo hoy»): nada en esas fechas. Con tipo o lista: nada con esos criterios.
     if (consulta.estado === 'pendiente' && !hayFiltros) return ['No tienes nada pendiente.'];
@@ -186,6 +198,7 @@ function formatearLista(filas, consulta, ahora, archivos = []) {
   }
 
   if (deArchivos) bloques.push(deArchivos);
+  if (notaOcultas) bloques.push(notaOcultas);
   if (marcas.hay) bloques.push(TEXTO_HAY_MAS);
   return bloques;
 }
@@ -862,6 +875,9 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
     mensajes = [[textoRecuerdo(meta), textoLlena(meta), meta.pregunta].filter(Boolean).join('\n')];
   } else if (meta.intencion === 'cancelar' || meta.intencion === 'completar') {
     mensajes = [textoSeleccion(meta.intencion, filasEscritas)];
+    // Lo que el modelo eligió pero era de otra sección : no se ha tocado y se dice
+    const fuera = meta.fuera_de_seccion;
+    if (fuera?.titulos?.length) mensajes[0] += `\nNo he tocado ${fuera.titulos.map((t) => `«${limpiar(t)}»`).join(', ')}: no ${fuera.titulos.length === 1 ? 'es' : 'son'} de ${fuera.seccion === 'citas' ? 'tus citas' : fuera.seccion === 'alarmas' ? 'tus alarmas' : 'tus tareas'}.`;
   } else {
     // Un nombre nuevo para la secretaria lo confirma el código, con el nombre ya validado (no lo que diga el modelo)
     // Igual con el nombre del usuario: cómo quiere que se le llame

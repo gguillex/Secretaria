@@ -2,7 +2,7 @@
 
 [![Pruebas](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml/badge.svg)](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml)
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-![Versión 1.5.0](https://img.shields.io/badge/versión-1.5.0-informational)
+![Versión 1.6.0](https://img.shields.io/badge/versión-1.6.0-informational)
 ![n8n 2.41.6](https://img.shields.io/badge/n8n-2.41.6-EA4B71)
 ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933)
 ![Gemini](https://img.shields.io/badge/IA-Gemini-4285F4)
@@ -25,7 +25,7 @@ Pensado para **una sola persona**: tú. Corre en un servidor pequeño propio, co
 - **Alarmas** («recuérdame a las 18:30…»), con avisos 1 hora antes, 30 minutos antes y a la hora. **Respondiendo a un aviso** se aplaza
   o se mueve («10 minutos más», «muévela a las 20:00»).
 - **Tareas, listas, notas y proyectos**, con consultas en lenguaje natural («qué tengo hoy», «qué alarmas tengo», «qué apunté del
-  casero») y comandos (`/help`, `/today`, `/pending`, `/files`, `/memory`…). Los listados van con titulares cortos; «completo» enseña el detalle.
+  casero») y comandos (`/help`, `/today`, `/pending`, `/files`, `/memory`…). Los listados van con titulares cortos; «completo» enseña el detalle. «Dame todo» y `/pending` no incluyen citas ni alarmas, que se piden aparte.
 - **Cambiar de tipo** algo ya guardado («ponla como alarma», «pásalo a cita», «que sea una tarea»): lo hace el código, que mueve las
   fechas y solo confirma lo que de verdad quedó guardado.
 - **Quitar sin dar vueltas, y deshacer:** «borra las alarmas y las tareas» quita varias secciones a la vez y te dice lo que ha quitado,
@@ -54,6 +54,8 @@ Pensado para **una sola persona**: tú. Corre en un servidor pequeño propio, co
   voz) se resuelven sin llamar al modelo, como los comandos.
 - **Pocas preguntas:** solo pregunta cuando falta un dato (¿a qué hora?, ¿alarma, cita o tarea?), cuando una cita choca con otra o
   con tu horario fijo, o antes de borrar en Drive. Las respuestas son cortas y sin relleno.
+- **Dos cosas distintas en un mensaje** («apunta comprar pan y dime qué tengo hoy»): se separan por código y cada una tiene su
+  respuesta.
 - **Todo en orden:** contesta textos, audios, fotos y documentos en el orden en que llegaron; si mandas varios seguidos, cada
   respuesta cita el mensaje al que contesta.
 - **No deja preguntas en el aire:** si te pregunta algo («¿La apunto igualmente?») y le mandas otra cosa sin contestar, no hace

@@ -410,6 +410,77 @@ function cuerpoAvisoArchivo({ para, nombre }) {
   return { messaging_product: 'whatsapp', recipient_type: 'individual', to: para, type: 'text', text: { preview_url: false, body: `No he podido mandarte «${n}»: no encuentro el archivo en Drive.` } };
 }
 
+// --- Dos peticiones distintas en un mismo mensaje  ---
+// «Apunta comprar pan y dime qué tengo hoy»: el modelo y el código esperan UNA acción por mensaje, así que una de las dos se perdía. Aquí se
+// parte el mensaje en peticiones, cada una se procesa por separado (en orden) y tiene su propia respuesta. Solo se parte cuando es CLARO:
+//   - cada trozo empieza con una orden conocida (apunta, recuérdame, borra, mueve, dame, qué tengo…) y hay al menos dos CLASES distintas de
+//     orden (apuntar y consultar, borrar y mover…): dos cosas que apuntar ya van juntas en una sola petición, como siempre;
+//   - los trozos se separan por líneas, por final de frase (. ? ! ;) o por «y además», «y también», «otra cosa:», o por «y»/«,» seguidos
+//     de una orden («compra leche y huevos» no se parte: «huevos» no es una orden);
+//   - nunca con viñetas o una lista pegada, con un trozo que no empiece por una orden, ni en mensajes muy largos. Ante la duda, no se parte.
+// Devuelve la lista de peticiones (una sola si no se parte).
+const MAX_PETICIONES = 4;
+const baseOrden = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const RELLENO_ORDEN = /^(?:(?:y|e|ademas|tambien|luego|despues|otra cosa|por favor|porfa|oye|ah|vale|bueno|y ademas|y tambien|y luego)[ ,:]+)+/;
+const CLASES_ORDEN = [
+  ['cambiar', /^(?:cambia|mueve|pasa|aplaza|retrasa|adelanta) (?:la|el|mi) (?:cita|alarma|tarea|recordatorio|evento|examen)\b/],
+  ['consultar', /^(?:dame|damelo|damelas|damelos|dime|ensename|muestrame|pasame|mandame|enviame|que tengo|que hay|cuales|cuantas|cuantos|cuando|tengo algo|lista|listame|quiero ver)\b/],
+  ['borrar', /^(?:borra|borrame|borralo|borrala|quita|quitame|quitalo|quitala|elimina|eliminalo|cancela|cancelalo|olvida|vacia)\b/],
+  ['mover', /^(?:mueve|muevelos|muevelas|mete|metelos|metelas|lleva|llevalos|pasa|pasalos|pasalas)\b/],
+  ['archivar', /^(?:ponl[oa]s?|guardal[oa]s?|archival[oa]s?) en\b/],
+  ['carpeta', /^crea (?:una |la )?carpeta\b/],
+  ['guardar', /^(?:apunta|apuntame|anota|anotame|recuerdame|avisame|anade|agrega|guarda|guardame|pon(?:me)? (?:una|un) (?:alarma|cita|tarea|recordatorio|nota)|crea (?:una|un) (?:alarma|cita|tarea|recordatorio|nota|proyecto|lista))\b/],
+  ['completar', /^(?:ya (?:he|hice|compre|termine|entregue|llame|pague)|marca|tacha)\b/],
+];
+function claseOrden(trozo) {
+  const b = baseOrden(trozo).replace(/[¿¡"«“']/g, '').trim().replace(RELLENO_ORDEN, '');
+  for (const [clase, re] of CLASES_ORDEN) if (re.test(b)) return clase;
+  return null;
+}
+// Dónde puede empezar otra petición dentro de una línea: final de frase, conectores claros o «y»/«,» delante de una orden
+const CORTE_FRASE = /(?<=[.!?;])\s+|\s*[,.;]?\s+y\s+(?:ademas|tambien)\s*[,:]?\s+|\s*[,.;]\s*(?:ademas|tambien|otra cosa)\s*[,:]?\s+|\s*[,.;]?\s*otra cosa\s*:\s*/g;
+function cortarPorConector(linea) {
+  // Primero los cortes claros; dentro de cada trozo, «y»/«,» seguidos de una orden conocida
+  const trozos = [];
+  for (const t of linea.split(CORTE_FRASE)) {
+    if (!t || !t.trim()) continue;
+    const b = baseOrden(t);
+    let ini = 0;
+    const re = /(?:\s+y\s+|\s*,\s+)/g;
+    let m;
+    while ((m = re.exec(b)) !== null) {
+      const resto = t.slice(m.index + m[0].length);
+      if (claseOrden(resto)) {
+        trozos.push(t.slice(ini, m.index));
+        ini = m.index + m[0].length;
+      }
+    }
+    trozos.push(t.slice(ini));
+  }
+  return trozos.map((x) => x.trim().replace(/^[,.;]+|[,;]+$/g, '').trim()).filter(Boolean);
+}
+function separarPeticiones(texto) {
+  const t = String(texto ?? '').replace(/[\u200B-\u200F\u2060-\u2064\uFEFF]/g, '').trim();
+  if (t === '' || t.length > 1500) return [t];
+  const lineas = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  // Una lista pegada o con viñetas: nunca se parte (son títulos, no órdenes)
+  if (lineas.some((l) => /^(?:[•·*\-–]|\d+[.)])\s*/.test(l))) return [t];
+  const trozos = lineas.flatMap(cortarPorConector);
+  if (trozos.length < 2 || trozos.length > MAX_PETICIONES * 2) return [t];
+  const clases = trozos.map(claseOrden);
+  if (clases.some((c) => c === null)) return [t];
+  // Trozos seguidos de la misma clase van juntos («apunta X. Apunta Y» es una sola petición, como siempre)
+  const grupos = [];
+  trozos.forEach((x, i) => {
+    if (grupos.length > 0 && grupos.at(-1).clase === clases[i]) grupos.at(-1).textos.push(x);
+    else grupos.push({ clase: clases[i], textos: [x] });
+  });
+  if (grupos.length < 2 || grupos.length > MAX_PETICIONES) return [t];
+  // Sin el conector del principio («y apunta…», «además dame…») ni el punto final: cada petición, limpia
+  const RELLENO_ORIGINAL = /^(?:(?:y|e|además|ademas|también|tambien|luego|después|despues|otra cosa|por favor|porfa)[ ,:]+)+/i;
+  return grupos.map((g) => g.textos.map((x) => x.replace(RELLENO_ORIGINAL, '').replace(/[.;,\s]+$/, '').trim()).join('. '));
+}
+
 // Id de un mensaje del usuario que se puede citar en la respuesta ("context": { "message_id": "<wamid>" } en la API de Meta). Sin un id
 // válido no se cita (el mensaje sale igual).
 const ID_WHATSAPP = /^[A-Za-z0-9._=+\/-]{1,300}$/;

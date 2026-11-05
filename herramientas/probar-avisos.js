@@ -166,6 +166,8 @@ async function main() {
     afirmar('a los 30 minutos seguidos avisa y dice cuánto lleva', largo && largo.texto.includes('Lleva 30 min fallando por la red.'), largo?.texto);
 
     const alm2 = {};
+    { const alm500 = {}; afirmar('un 500 de Google («The service was not able to process your request», visto en Vigilar Drive) también se tolera', (await aviso(red('Secretaria · Latido', 'The service was not able to process your request'), alm500)).length === 0); }
+    afirmar('un error de verdad (un 404) sigue avisando enseguida', (await aviso(red('Secretaria · Latido', 'The resource you are requesting could not be found (404)'), {})).length === 1);
     afirmar('un Bad gateway también se tolera', (await aviso(red('Secretaria · Latido', 'Bad gateway - the server returned an invalid response'), alm2)).length === 0);
     avanzar(20);
     afirmar('pero un hueco de más de 15 min sin fallos abre un episodio nuevo', (await aviso(red('Secretaria · Latido', 'Bad gateway'), alm2)).length === 0);

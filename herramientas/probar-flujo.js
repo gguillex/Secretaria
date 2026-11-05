@@ -842,6 +842,9 @@ async function main() {
     afirmar('llamada con demasiados mensajes seguidos: lo pasa con su aviso', dem.demasiados === true && dem.aviso_demasiados === 'Me has mandado 9 mensajes seguidos…');
     const [sinDem] = await correr(nodo('entrada.js'), { DT: DTFalso, nodos: llamado({ mensaje: 'a', wa_message_id: 'wamid.E', tipo_entrada: 'texto', demasiados: true, aviso_demasiados: '' }) });
     afirmar('«demasiados» sin texto de aviso no se toma en cuenta', !('demasiados' in sinDem));
+    const [parte2] = await correr(nodo('entrada.js'), { DT: DTFalso, nodos: llamado({ mensaje: 'dime qué tengo hoy', wa_message_id: 'wamid.P.p2', tipo_entrada: 'texto', parte: 2, partes: 2, antes_en_mensaje: 'Apunta comprar pan' }) });
+    const [parte1] = await correr(nodo('entrada.js'), { DT: DTFalso, nodos: llamado({ mensaje: 'Apunta comprar pan', wa_message_id: 'wamid.P', tipo_entrada: 'texto', parte: 1, partes: 2 }) });
+    afirmar('llamada con dos peticiones : la segunda pasa su número y lo pedido antes; la primera, nada nuevo', parte2.parte === 2 && parte2.antes_en_mensaje === 'Apunta comprar pan' && parte2.wa_message_id === 'wamid.P.p2' && !('parte' in parte1), JSON.stringify([parte1, parte2]));
     const [conCtx] = await correr(nodo('entrada.js'), { DT: DTFalso, nodos: llamado({ mensaje: 'guárdala en Fotos', wa_message_id: 'wamid.X', tipo_entrada: 'texto', contexto_id: 'wamid.HBgMCONF=' }) });
     afirmar('llamada: pasa el id del mensaje al que se responde', conCtx.contexto_id === 'wamid.HBgMCONF=');
     afirmar('llamada: un contexto_id raro o que no es texto se descarta', (await Promise.all(['con espacios', 5, null, 'a"b', 'x'.repeat(400)].map((c) => correr(nodo('entrada.js'), { DT: DTFalso, nodos: llamado({ mensaje: 'a', wa_message_id: 'w', contexto_id: c }) })))).every(([x]) => x.contexto_id === ''));
@@ -3446,7 +3449,7 @@ async function main() {
     const delModeloUn = await planificar(respuesta({ intencion: 'mover_archivos', mover_archivos: { nombre: 'playa.jpg', destino: 'Fotos' } }), { mensaje: 'x', carpetasConocidas: CONOC });
     afirmar('mover_archivos del modelo con nombre: el mismo plan', delModeloUn.some((x) => x.etiqueta === 'mover el archivo playa.jpg a Fotos'));
 
-    // Sección 76: «Hecho: 2 archivos…» y luego «Mueve esos dos archivos de antes a Viajes/Budapest» → «No tienes…»
+    // «Hecho: 2 archivos…» y luego «Mueve esos dos archivos de antes a Viajes/Budapest» → «No tienes…»
     const ID1 = '11111111-1111-4111-8111-111111111111';
     const ID2 = '22222222-2222-4222-8222-222222222222';
     const NOMBRE_DOBLE = '2026-10-23 1504 · WhatsApp.jpg';
@@ -3485,7 +3488,7 @@ async function main() {
     afirmar('Resultado de «esos» si ya no existen: lo dice', (await resMA(esos[0].meta, [])).mensajes[0] === 'Esos archivos ya no están.');
     afirmar('mover por nombre también anota los movidos', JSON.parse((await resMA(un[0].meta, [filaArch(ID1)])).anotacion?.hilo?.at(-1)?.texto ?? 'null')?.ids?.[0] === ID1);
 
-    // Sección 77: «Mueve todo lo de notas a Budapest» y variantes acababan en «Sí puedo mover carpetas…» cinco veces
+    // «Mueve todo lo de notas a Budapest» y variantes acababan en «Sí puedo mover carpetas…» cinco veces
     const C77 = [
       { ruta: 'Notas', en_drive: true, archivos: 2 }, { ruta: 'Viajes', en_drive: true, archivos: 0 }, { ruta: 'Viajes/Budapest', en_drive: true, archivos: 0 },
       { ruta: 'Viajes/Tren de Hierro', en_drive: true, archivos: 1 }, { ruta: 'viajes/Budapest', en_drive: false, archivos: 1 }, { ruta: 'Entrada', en_drive: true, archivos: 0 },
@@ -3511,7 +3514,7 @@ async function main() {
     const res77 = await resMA((await m77('Mueve todo lo de notas a Budapest'))[0].meta, [{ id: 'f1' }, { id: 'f2' }]);
     afirmar('Resultado: desde Notas no sugiere «borra la carpeta Notas» (no se borra nunca)', res77.mensajes[0] === 'Hecho: 2 archivos de «Notas» a «Viajes/Budapest». En unos segundos estarán en Drive.', res77.mensajes[0]);
 
-    // Sección 78: «Pasa todo lo de Budapest a Documentos» → «Perdón me he equivocado, déjalo como estaba» → nada
+    // «Pasa todo lo de Budapest a Documentos» → «Perdón me he equivocado, déjalo como estaba» → nada
     const C78 = [
       { ruta: 'Documentos', en_drive: true, archivos: 0 }, { ruta: 'Viajes', en_drive: true, archivos: 0 }, { ruta: 'Viajes/Budapest', en_drive: true, archivos: 1 },
       { ruta: 'viajes/Budapest', en_drive: false, archivos: 1 },
@@ -3540,6 +3543,35 @@ async function main() {
     afirmar('Resultado de deshacer: «Hecho, como estaba…»; que falle anular el vaciado (sin actualizar la base de datos a la 1.5) no es un fallo; y se puede volver a deshacer', vueltaRes.ok === true && vueltaRes.mensajes[0] === 'Hecho, como estaba: el archivo vuelve a «Viajes/Budapest». En unos segundos estará en Drive.' && JSON.parse(vueltaRes.anotacion.hilo.at(-1).texto).deshacer[0].de === 'Documentos', JSON.stringify(vueltaRes));
     const cmd78 = new Function(`return ${codigoComandos()}`)();
     afirmar('«déjalo como estaba» no es deshacer si dice otra cosa («deja la reunión como estaba el martes» sí lo es, pero solo si lo último fue mover)', cmd78.interpretarDeshacerMovimiento('qué tengo hoy') === false && cmd78.interpretarDeshacerMovimiento('mueve todo a Notas') === false);
+
+    // «Esto es lo único que me queda por hacer en tareas borra lo demás» quitó también una tarea de un proyecto
+    const P79 = [
+      { id: 't-contrato', tipo: 'tarea', titulo: 'Firmar contrato' }, { id: 't-beca', tipo: 'tarea', titulo: 'Hacer solicitud de beca' },
+      { id: 't-asturias', tipo: 'tarea', titulo: 'Planificar viaje a Asturias' }, { id: 't-esqui', tipo: 'tarea', titulo: 'Planificar viaje a esquiar' },
+      { id: 't-insta', tipo: 'tarea', titulo: 'Empezar el proyecto', proyecto: 'Instagram' }, { id: 'e-pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-10-30T09:30:00Z' },
+    ];
+    const MSG79 = '•\u2060  \u2060Hacer solicitud de beca\n•\u2060  \u2060Terminar trabajo del curso\n\nEsto es lo único que me queda por hacer en tareas borra lo demás';
+    const r79 = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['t-asturias', 't-esqui', 't-insta', 't-contrato'] } }), { mensaje: MSG79, pendientes: P79 });
+    const c79 = r79.find((x) => x.etiqueta === 'cancelar items');
+    afirmar('«…en tareas borra lo demás»: no quita la tarea del proyecto (no es de Tareas) y lo apunta para decirlo', c79 && !c79.url.includes('t-insta') && ['t-asturias', 't-esqui', 't-contrato'].every((id) => c79.url.includes(id)) && JSON.stringify(r79[0].meta.fuera_de_seccion) === JSON.stringify({ seccion: 'tareas', titulos: ['Empezar el proyecto'] }), JSON.stringify([c79?.url, r79[0].meta.fuera_de_seccion]));
+    const res79 = await correr(nodo('resultado.js'), { input: [{ id: 'x' }], nodos: { Planificar: [{ meta: r79[0].meta }], 'Escribir en Supabase': [{ id: 't-asturias', titulo: 'Planificar viaje a Asturias' }, { id: 't-esqui', titulo: 'Planificar viaje a esquiar' }, { id: 't-contrato', titulo: 'Firmar contrato' }] } }).then((x) => x[0]);
+    afirmar('Resultado: lo dice («No he tocado «Empezar el proyecto»: no es de tus tareas»)', res79.mensajes[0] === 'Quitados: «Planificar viaje a Asturias», «Planificar viaje a esquiar», «Firmar contrato».\nNo he tocado «Empezar el proyecto»: no es de tus tareas.', res79.mensajes[0]);
+    const conProyecto = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['t-insta'] } }), { mensaje: 'borra la tarea del proyecto Instagram', pendientes: P79 });
+    afirmar('si se habla del proyecto, sí se quita la tarea del proyecto', conProyecto.find((x) => x.etiqueta === 'cancelar items')?.url.includes('t-insta'));
+    const soloFuera = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['e-pelu'] } }), { mensaje: 'borra las tareas de la peluquería', pendientes: P79 });
+    afirmar('si todo lo elegido es de otra sección, no se toca nada y se dice', !soloFuera.some((x) => x.etiqueta === 'cancelar items') && soloFuera[0].meta.respuesta_usuario.startsWith('No he tocado nada'), JSON.stringify(soloFuera[0].meta.respuesta_usuario));
+    // «Dame todo» sin citas ni alarmas
+    const cmd79 = new Function(`return ${codigoComandos()}`)();
+    const atajo79 = await planificar({ saltar_modelo: true }, { mensaje: 'Dame todo' });
+    afirmar('«Dame todo» llega a Resultado con sin_agenda (la validación no lo quita)', atajo79[0].meta.consulta?.sin_agenda === true, JSON.stringify(atajo79[0].meta.consulta));
+    for (const frase of ['Dame todo', 'dame todo completo', 'qué tengo pendiente', '/pending']) {
+      const c = cmd79.interpretarComando(frase, { ahora: new Date() });
+      afirmar(`«${frase}»: consulta sin citas ni alarmas (sin_agenda)`, c?.datos?.consulta?.sin_agenda === true, JSON.stringify(c));
+    }
+    afirmar('«/today» y «dame las citas» no llevan sin_agenda', !cmd79.interpretarComando('/today', { ahora: new Date() })?.datos?.consulta?.sin_agenda && !cmd79.interpretarComando('dame las citas', { ahora: new Date() })?.datos?.consulta?.sin_agenda);
+    const filasTodo = [{ tipo: 'tarea', titulo: 'Hacer solicitud de beca' }, { tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2099-10-30T09:30:00Z' }, { tipo: 'tarea', titulo: 'Horno', recordar_en: '2099-10-30T09:30:00Z' }, { tipo: 'evento', titulo: 'Examen', fecha_inicio: '2099-11-04T17:00:00Z' }];
+    const resTodo = await correr(nodo('resultado.js'), { input: filasTodo, nodos: { Planificar: [{ meta: { ok: true, error: null, intencion: 'consultar', avisos: [], respuesta_usuario: '', pregunta: null, ahora: '2026-10-24T16:00:00.000Z', consulta: { tipo: null, lista: null, estado: 'pendiente', sin_agenda: true }, consulta_url: 'x' } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((x) => x[0]).catch((e) => ({ error: String(e) }));
+    afirmar('«Dame todo»: sin las secciones Citas ni Alarmas y con una línea de cuántas hay aparte', typeof resTodo.respuesta_usuario === 'string' && resTodo.respuesta_usuario.includes('*Tareas*') && !resTodo.respuesta_usuario.includes('*Citas*') && !resTodo.respuesta_usuario.includes('*Alarmas*') && resTodo.respuesta_usuario.includes('Aparte tienes 2 citas y 1 alarma: «dame las citas».'), JSON.stringify(resTodo).slice(0, 600));
 
     // El modelo dice que no puede mover: se corrige, también en una pregunta (visto el 2026-10-23)
     const niega = await planificar(respuesta({ intencion: 'aclarar', pregunta: 'No puedo mover carpetas en Drive. ¿Quieres que cree la carpeta «Viajes/Budapest» o te lo apunto como tarea?', respuesta_usuario: 'x' }), { mensaje: 'Mueve Budapest a Viajes' });
@@ -3570,7 +3602,7 @@ async function main() {
     afirmar('las carpetas conocidas llegan a Planificar y «mueve Budapest a la carpeta Viajes» va sin el modelo', c3.carpetas_conocidas.length === CONOC.length && c3.saltar_modelo === true);
     const c4 = await montarCP('Mueve Budapest a la carpeta Viajes', { carpetas: [{ error: { message: 'HTTP 404' } }] });
     afirmar('sin actualizar la base de datos a la 1.5 (la lectura falla): sin carpetas conocidas y decide el modelo', c4.carpetas_conocidas.length === 0 && c4.saltar_modelo === false);
-    { // Sección 78: «déjalo como estaba» va sin el modelo solo si lo último fue mover archivos
+    { // «déjalo como estaba» va sin el modelo solo si lo último fue mover archivos
       const nota78 = JSON.stringify({ motivo: 'movidos', origen: 'codigo', ids: ['44444444-4444-4444-8444-444444444444'], deshacer: [{ id: '44444444-4444-4444-8444-444444444444', de: 'Viajes/Budapest', a: 'Documentos' }], vaciar: ['Viajes/Budapest'] });
       const fila78 = { wa_message_id: 'wa-m', tipo_entrada: 'texto', texto_original: 'Pasa todo lo de Budapest a Documentos', respuesta_texto: 'Hecho', hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: nota78 }], created_at: hace(1) };
       const c78 = await montarCP('Perdón me he equivocado, déjalo como estaba', { conversacion: [fila78], config: { ...CONFIG, memoria_mensajes: 5, memoria_min: 120 } });
@@ -3581,7 +3613,7 @@ async function main() {
     afirmar('Construir: «Mueve todo lo de notas a Budapest» va sin el modelo ', (await montarCP('Mueve todo lo de notas a Budapest', { carpetas: C77 })).saltar_modelo === true);
     afirmar('«Mueve ⁠2026-10-23 1504 · WhatsApp.jpg a Notas» (un archivo por su nombre) va sin el modelo', (await montarCP(real, { carpetas: CONOC })).saltar_modelo === true);
     afirmar('«mueve las fotos de Budapest a Viajes/Budapest» va sin el modelo', (await montarCP('mueve las fotos de Budapest a Viajes/Budapest', { carpetas: CONOC })).saltar_modelo === true);
-    // Sección 76: de dónde salen «esos archivos» y los archivos por nombre
+    // de dónde salen «esos archivos» y los archivos por nombre
     const conMovidos = [
       { wa_message_id: 'wa-9', tipo_entrada: 'texto', texto_original: 'qué tengo hoy', respuesta_texto: 'Nada.', hilo: null, created_at: hace(1) },
       { wa_message_id: 'wa-8', tipo_entrada: 'texto', texto_original: 'Mueve x.jpg a Notas', respuesta_texto: 'Hecho', hilo: [{ rol: 'user', texto: 'x' }, { rol: 'model', texto: JSON.stringify({ motivo: 'movidos', origen: 'codigo', ids: ['11111111-1111-4111-8111-111111111111', 'no-es-un-id'] }) }], created_at: hace(2) },
@@ -3593,6 +3625,21 @@ async function main() {
     afirmar('Construir: una nota de movidos sin origen codigo no vale', cmFalso.movidos_recientes === null);
     const cmArch = await montarCP('x', { archivos: [archivo('f-a', 5, 'asignado')] });
     afirmar('Construir: pasa los archivos recientes con su nombre y carpeta', cmArch.archivos_conocidos.length === 1 && cmArch.archivos_conocidos[0].nombre === 'f-a.jpg');
+    { // la segunda petición de un mismo mensaje
+      const correrParte = (mensaje, extra, pregunta = [{}]) => correr(codigoCP, {
+        nodos: {
+          Configuración: [{ config: CONFIG }], Entrada: [{ ...entradaCP(mensaje), recibido_at: hace(1), ...extra }], 'Leer memoria': [{ termino: 'nombre de la secretaria', significado: 'Jarvis' }], 'Leer items pendientes': [{}], 'Leer pregunta pendiente': pregunta, 'Leer archivos': [{}], 'Leer proyectos': [{}], 'Leer respuesta citada': [{}],
+        },
+      }).then((x) => x[0]);
+      const c80 = await correrParte('apunta llamar al banco el lunes', { parte: 2, antes_en_mensaje: 'Borra la cita del dentista' });
+      const t80 = c80.cuerpo.contents.at(-1).parts[0].text;
+      afirmar('Construir: la 2.ª petición le dice al modelo lo que se pidió antes en el mismo mensaje (ya hecho)', t80.includes('En el mismo mensaje, antes de esto, el usuario pidió (ya está hecho, no lo repitas): «Borra la cita del dentista»') && t80.endsWith('apunta llamar al banco el lunes'), t80);
+      const hiloHora = [{ rol: 'user', texto: 'apunta el dentista' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', pregunta: '¿A qué hora?' }), en: new Date().toISOString() }];
+      const conPreg = await correrParte('a las 10', { parte: 2, antes_en_mensaje: 'apunta el dentista' }, [{ id: 'q-hora', pregunta: '¿A qué hora?', hilo: hiloHora }]);
+      afirmar('Construir: la 2.ª petición no contesta a la pregunta que acaba de hacer la 1.ª (se escribió antes de que existiera)', conPreg.pendiente_id !== 'q-hora', JSON.stringify(conPreg.pendiente_id));
+      const sinParte = await correrParte('a las 10', {}, [{ id: 'q-hora', pregunta: '¿A qué hora?', hilo: hiloHora }]);
+      afirmar('Construir: un mensaje normal sí puede contestarla (como siempre)', sinParte.pendiente_id === 'q-hora', JSON.stringify(sinParte.pendiente_id));
+    }
     const c5 = await montarCP('1', { pregunta: [{ id: 'p-carpeta', pregunta: preg.pregunta, hilo: hiloP }] });
     afirmar('«1» a «¿Dónde la guardo?»: contesta a esa pregunta y sin el modelo', c5.pendiente_id === 'p-carpeta' && c5.saltar_modelo === true);
     // La conversación reciente (MEMORIA_MENSAJES)

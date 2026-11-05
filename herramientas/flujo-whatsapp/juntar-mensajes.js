@@ -74,29 +74,38 @@ $input.all().forEach((item, i) => {
     const ultimo = grupo.at(-1);
     // Si alguno respondía a una foto o a una confirmación, vale el último que lo hacía
     const citas = grupo.map((m) => m.contexto_wa_id).filter((c) => typeof c === 'string' && VALIDO.test(c));
-    salida.push({
-      json: {
-        accion: 'procesar',
-        mensaje: textos.join('\n'),
-        wa_message_id: ultimo.wa_message_id,
-        tipo_entrada: ultimo.tipo_entrada === 'audio' ? 'audio' : 'texto',
-        contexto_id: citas.at(-1) ?? '',
-        // El turno es de la ejecución que reclamó (su mensaje, el último): lo comparten todos los grupos
-        mensaje_id: propio.id,
-        // La respuesta cita el PRIMER mensaje del grupo (WhatsApp solo deja citar uno): contesta a todos los que van desde ese
-        // Tuvo que esperar a que otra ejecución contestara: el usuario mandó este mientras se procesaba otro (varios mensajes)
-        espero_turno: vuelta > 0,
-        // Cuándo llegó el primero del grupo: el flujo principal sabe así si el usuario ya había visto una pregunta abierta
-        recibido_at: typeof grupo[0]?.created_at === 'string' ? grupo[0].created_at : null,
-        // Todos los mensajes que contesta esta respuesta (se marcan como contestados al mandarla)
-        wa_ids: grupo.map((m) => m.wa_message_id).filter((w) => typeof w === 'string' && VALIDO.test(w)),
-        responde_a: grupo.map((m) => m.wa_message_id).find((w) => typeof w === 'string' && VALIDO.test(w)) ?? ultimo.wa_message_id,
-        juntados: grupo.length,
-        // Demasiados seguidos (p. ej. se reenvió medio chat): el flujo principal no los procesa y lo avisa con este texto
-        demasiados: demasiadosSeguidos,
-        aviso_demasiados: demasiadosSeguidos ? MENSAJE_EXCESO_COLA(mensajes.length) : '',
-      },
-      pairedItem: { item: i },
+    // Dos peticiones distintas en UN mensaje : cada una se procesa aparte, en orden, con su respuesta. Solo un mensaje suelto (no
+    // los juntados, que se procesan juntos a propósito, ni el pie de un archivo, ni un exceso). La primera conserva el id del mensaje; las demás
+    // llevan «.p2», «.p3»… (la tabla de mensajes no admite dos filas con el mismo id) y se marcan como contestadas con él.
+    const partes = grupo.length === 1 && !demasiadosSeguidos && !esPie(grupo[0]) ? separarPeticiones(textos.join('\n')) : [textos.join('\n')];
+    partes.forEach((parte, k) => {
+      const idParte = k === 0 ? ultimo.wa_message_id : `${ultimo.wa_message_id}.p${k + 1}`;
+      salida.push({
+        json: {
+          accion: 'procesar',
+          mensaje: parte,
+          wa_message_id: VALIDO.test(idParte) ? idParte : ultimo.wa_message_id,
+          // qué parte es y lo que se pidió antes en el mismo mensaje (contexto para el modelo; ya está hecho)
+          ...(partes.length > 1 ? { parte: k + 1, partes: partes.length, antes_en_mensaje: partes.slice(0, k).join(' / ').slice(0, 500) } : {}),
+          tipo_entrada: ultimo.tipo_entrada === 'audio' ? 'audio' : 'texto',
+          contexto_id: citas.at(-1) ?? '',
+          // El turno es de la ejecución que reclamó (su mensaje, el último): lo comparten todos los grupos
+          mensaje_id: propio.id,
+          // La respuesta cita el PRIMER mensaje del grupo (WhatsApp solo deja citar uno): contesta a todos los que van desde ese
+          // Tuvo que esperar a que otra ejecución contestara: el usuario mandó este mientras se procesaba otro (varios mensajes)
+          espero_turno: vuelta > 0,
+          // Cuándo llegó el primero del grupo: el flujo principal sabe así si el usuario ya había visto una pregunta abierta 
+          recibido_at: typeof grupo[0]?.created_at === 'string' ? grupo[0].created_at : null,
+          // Todos los mensajes que contesta esta respuesta (se marcan como contestados al mandarla)
+          wa_ids: [...grupo.map((m) => m.wa_message_id), ...(k > 0 ? [idParte] : [])].filter((w) => typeof w === 'string' && VALIDO.test(w)),
+          responde_a: grupo.map((m) => m.wa_message_id).find((w) => typeof w === 'string' && VALIDO.test(w)) ?? ultimo.wa_message_id,
+          juntados: grupo.length,
+          // Demasiados seguidos (p. ej. se reenvió medio chat): el flujo principal no los procesa y lo avisa con este texto
+          demasiados: demasiadosSeguidos,
+          aviso_demasiados: demasiadosSeguidos ? MENSAJE_EXCESO_COLA(mensajes.length) : '',
+        },
+        pairedItem: { item: i },
+      });
     });
   });
 });

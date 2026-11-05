@@ -42,7 +42,9 @@ if (!estado.dia || estado.dia.fecha !== hoy) estado.dia = { fecha: hoy, enviados
 // --- Errores de red en flujos que se repiten solos: se toleran hasta que duren TOLERANCIA_RED_MIN minutos ---
 // Un episodio sigue abierto mientras el siguiente fallo de red llegue en menos de HUECO_EPISODIO_MIN minutos del anterior.
 const HUECO_EPISODIO_MIN = 15;
-const ERROR_DE_RED = /timed out|timeout|bad gateway|gateway time-?out|service unavailable|\b50[234]\b|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up/i;
+// También un error interno del servicio (500 de Google: «The service was not able to process your request»):
+// pasajero como los demás; si dura 30 minutos, avisa igual.
+const ERROR_DE_RED = /timed out|timeout|bad gateway|gateway time-?out|service unavailable|\b50[0234]\b|internal server error|internal error|backend ?error|not able to process your request|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up/i;
 let minutosConRed = 0;
 if (ERROR_DE_RED.test(mensaje) && (config.flujos_periodicos ?? []).includes(flujo) && config.tolerancia_red_min > 0) {
   estado.red = estado.red && typeof estado.red === 'object' ? estado.red : {};

@@ -2,6 +2,29 @@
 
 Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer para actualizar una instalación existente.
 
+## 1.6.0 · 2026-11-05
+
+### Novedades
+
+- **Dos peticiones distintas en un mismo mensaje** («apunta comprar pan y dime qué tengo hoy»): se separan por código y cada una tiene su
+  respuesta, en orden. Solo parte cuando cada trozo empieza por una orden clara y hay al menos dos clases distintas; una lista con
+  viñetas o un mensaje largo se procesan como uno.
+
+### Cambios
+
+- **Quitar solo de la sección que nombras:** «esto es lo único que me queda en tareas, borra lo demás» ya no quita también una tarea que
+  pertenece a un proyecto; lo que queda fuera se dice («No he tocado «…»: no es de tus tareas.»). Se puede recuperar con «deshaz».
+- **«Dame todo» y `/pending` no incluyen citas ni alarmas** (se piden con «dame las citas» o «qué alarmas tengo»); «qué tengo hoy», `/today`
+  y el resumen de la mañana las siguen enseñando.
+- **Menos avisos falsos:** un error 500 pasajero de Google («The service was not able to process your request») cuenta como error de red:
+  en los flujos que se repiten solos no avisa hasta que dure 30 minutos.
+
+### Para actualizar desde la 1.5
+
+La base de datos **no cambia**. En el servidor: `git pull`, `bash herramientas/servidor/importar-flujos.sh` y vuelve a publicar los
+flujos (parte 11.5 del manual). Si vienes de una versión anterior a la 1.5, mira antes la sección de esa versión (la base de datos va
+primero).
+
 ## 1.5.0 · 2026-10-24
 
 ### Novedades
