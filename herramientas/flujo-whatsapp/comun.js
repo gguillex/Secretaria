@@ -429,7 +429,9 @@ const CLASES_ORDEN = [
   ['mover', /^(?:mueve|muevelos|muevelas|mete|metelos|metelas|lleva|llevalos|pasa|pasalos|pasalas)\b/],
   ['archivar', /^(?:ponl[oa]s?|guardal[oa]s?|archival[oa]s?) en\b/],
   ['carpeta', /^crea (?:una |la )?carpeta\b/],
-  ['guardar', /^(?:apunta|apuntame|anota|anotame|recuerdame|avisame|anade|agrega|guarda|guardame|pon(?:me)? (?:una|un) (?:alarma|cita|tarea|recordatorio|nota)|crea (?:una|un) (?:alarma|cita|tarea|recordatorio|nota|proyecto|lista))\b/],
+  // «Ponme X» es apuntar («Ponme Coger compás y dame todo» se parte en dos); «pon» a secas no, porque también mueve
+  // («pon la carpeta X dentro de Y») o corrige («pon que es a las 10»)
+  ['guardar', /^(?:apunta|apuntame|apuntalo|apuntala|anota|anotame|anotalo|recuerdame|recuerda|avisame|anade|anademe|agrega|agregame|guarda|guardame|ponme|pon (?:una|un) (?:alarma|cita|tarea|recordatorio|nota)|crea (?:una|un) (?:alarma|cita|tarea|recordatorio|nota|proyecto|lista)|compra|comprar|tengo que|hay que|necesito)\b/],
   ['completar', /^(?:ya (?:he|hice|compre|termine|entregue|llame|pague)|marca|tacha)\b/],
 ];
 function claseOrden(trozo) {

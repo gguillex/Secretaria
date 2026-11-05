@@ -834,8 +834,12 @@ async function main() {
       ['¿Qué tengo hoy? Y apunta llamar a mamá', ['¿Qué tengo hoy?', 'apunta llamar a mamá']],
       ['Mueve todo lo de notas a Budapest y además dame la jerarquía', ['Mueve todo lo de notas a Budapest', 'dame la jerarquía']],
       ['borra la tarea del banco, apunta llamar a Pepe y dame todo', ['borra la tarea del banco', 'apunta llamar a Pepe', 'dame todo']],
+      // «Ponme» sin «una alarma/cita…» no contaba como orden y el mensaje no se partía
+      ['Ponme Coger compás y dame todo', ['Ponme Coger compás', 'dame todo']],
+      ['Tengo que llamar al banco y dime qué tengo hoy', ['Tengo que llamar al banco', 'dime qué tengo hoy']],
+      ['Recuerda sacar la basura y borra la tarea del gimnasio', ['Recuerda sacar la basura', 'borra la tarea del gimnasio']],
     ]) afirmar(`separar «${frase.replace('\n', ' / ')}»: ${esperado.length} peticiones`, JSON.stringify(sep(frase)) === JSON.stringify(esperado), JSON.stringify(sep(frase)));
-    for (const frase of ['compra leche y huevos', 'Recuérdame llamar a Juan mañana a las 5', 'Apunta dentista el jueves. Pon que es a las 10', 'apunta X y también apunta Y', 'recuérdame que mueva el coche', 'dime qué tengo hoy y mañana', 'Hola, ¿qué tal? Apunta pan', '•  Hacer solicitud de beca\nEsto es lo único que me queda por hacer en tareas borra lo demás', 'Esto es lo único, borra lo demás']) {
+    for (const frase of ['compra leche y huevos', 'ponme pan y leche', 'tengo que comprar pan y leche', 'Recuérdame llamar a Juan mañana a las 5', 'Apunta dentista el jueves. Pon que es a las 10', 'apunta X y también apunta Y', 'recuérdame que mueva el coche', 'dime qué tengo hoy y mañana', 'Hola, ¿qué tal? Apunta pan', '•  Hacer solicitud de beca\nEsto es lo único que me queda por hacer en tareas borra lo demás', 'Esto es lo único, borra lo demás']) {
       afirmar(`no separar «${frase.replace('\n', ' / ')}» (no es claro o es una sola petición)`, sep(frase).length === 1 && sep(frase)[0] === frase.trim(), JSON.stringify(sep(frase)));
     }
     const [p1, p2] = await juntar([{ accion: 'procesar', mensajes: [{ id: 'd1', wa_message_id: 'wamid.d1', tipo_entrada: 'texto', texto: 'Apunta comprar pan y dime qué tengo hoy', created_at: '2026-11-05T10:00:00.000Z' }] }]);

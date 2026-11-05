@@ -9,6 +9,7 @@ Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer p
 - **Dos peticiones distintas en un mismo mensaje** («apunta comprar pan y dime qué tengo hoy»): se separan por código y cada una tiene su
   respuesta, en orden. Solo parte cuando cada trozo empieza por una orden clara y hay al menos dos clases distintas; una lista con
   viñetas o un mensaje largo se procesan como uno.
+  Cuenta como orden de apuntar también «ponme…», «tengo que…», «recuerda…» y «compra…».
 
 ### Cambios
 
