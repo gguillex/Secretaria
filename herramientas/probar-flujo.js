@@ -65,13 +65,13 @@ const REFS = { i1: 'a1-uuid', i2: 'b2-uuid', i3: 'c3-uuid' };
 
 // "pendienteId" e "hiloPrevio": la pregunta anterior que este mensaje contesta y el hilo guardado hasta ella
 // (lo que "Construir petición" le pasa a "Planificar"). "mensaje" es el texto de este mensaje (nodo "Entrada").
-const planificar = (resp, { mensajeId = 'm-1', config = CONFIG, refs = {}, pendienteId = null, hiloPrevio = [], mensaje = 'mensaje de prueba', agenda = [], refsArchivos = {}, infoArchivos = {}, pedirNombre = false, esperaNombre = false, nombreSecretaria = null, pendientes = [], proyectos = [], avisosCitados = [], reabribles = [], fechas = {}, memoria = [], horario = [], quitados = [], reciente = null, archivosCitados = [], loteReciente = [], carpetasConocidas = [], movidosRecientes = null, archivosConocidos = [] } = {}) =>
+const planificar = (resp, { mensajeId = 'm-1', config = CONFIG, refs = {}, pendienteId = null, hiloPrevio = [], mensaje = 'mensaje de prueba', agenda = [], refsArchivos = {}, infoArchivos = {}, pedirNombre = false, esperaNombre = false, nombreSecretaria = null, pendientes = [], proyectos = [], avisosCitados = [], reabribles = [], fechas = {}, memoria = [], horario = [], quitados = [], reciente = null, archivosCitados = [], loteReciente = [], carpetasConocidas = [], movidosRecientes = null, archivosConocidos = [], viaje = null, tramos = [] } = {}) =>
   correr(nodo('planificar.js'), {
     input: [resp],
     nodos: {
       Configuración: [{ config }],
       'Guardar mensaje': [{ id: mensajeId }],
-      'Construir petición': [{ refs: { ...Object.fromEntries(pendientes.map((x) => [x.id, x.id])), ...refs }, agenda, pendiente_id: pendienteId, hilo_previo: hiloPrevio, refs_archivos: refsArchivos, archivos_info: infoArchivos, pedir_nombre: pedirNombre, espera_nombre: esperaNombre, nombre_secretaria: nombreSecretaria, memoria_filas: memoria, horario, quitados, pendientes, proyectos, avisos_citados: avisosCitados, reabribles, fechas, reciente, archivos_citados: archivosCitados, lote_reciente: loteReciente, carpetas_conocidas: carpetasConocidas, movidos_recientes: movidosRecientes, archivos_conocidos: archivosConocidos }],
+      'Construir petición': [{ refs: { ...Object.fromEntries(pendientes.map((x) => [x.id, x.id])), ...refs }, agenda, pendiente_id: pendienteId, hilo_previo: hiloPrevio, refs_archivos: refsArchivos, archivos_info: infoArchivos, pedir_nombre: pedirNombre, espera_nombre: esperaNombre, nombre_secretaria: nombreSecretaria, memoria_filas: memoria, horario, quitados, pendientes, proyectos, avisos_citados: avisosCitados, reabribles, fechas, reciente, archivos_citados: archivosCitados, lote_reciente: loteReciente, carpetas_conocidas: carpetasConocidas, movidos_recientes: movidosRecientes, archivos_conocidos: archivosConocidos, viaje, tramos }],
       Entrada: [{ mensaje }],
       'Juntar mensajes': [{ mensaje }],
     },
@@ -263,12 +263,12 @@ async function main() {
     // Citas y alarmas ya las dicen «Horario:» y «🔔»: no se repite «Apuntado: …»
     const ev = [{ tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-13T08:00:00Z', fecha_fin: '2026-10-13T09:00:00Z' }];
     const t5 = await resG(ev, { eventos: [{ titulo: 'Dentista', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }] });
-    afirmar('una cita: solo «Horario: …», sin la frase del modelo ni el aviso de duración', t5.mensajes[0] === 'Horario: Dentista, mar 13 oct, de 10:00 a 11:00.', JSON.stringify(t5.mensajes));
+    afirmar('una cita: solo «Horario: …», sin la frase del modelo ni el aviso de duración', t5.mensajes[0] === '📅 Cita: Dentista, mar 13 oct, de 10:00 a 11:00.', JSON.stringify(t5.mensajes));
     const al = [{ tipo: 'tarea', titulo: 'Sacar la ropa', recordar_en: '2026-10-10T16:30:00Z', fecha_limite: null }];
     const t6 = await resG(al, { recordatorios: [{ titulo: 'Sacar la ropa', recordar_en: '2026-10-10T16:30:00Z' }] });
     afirmar('una alarma: solo «🔔 …», sin la frase del modelo', t6.mensajes[0] === '🔔 Sacar la ropa: hoy a las 18:30.', JSON.stringify(t6.mensajes));
     const t7 = await resG([...ev, { tipo: 'tarea', titulo: 'Llevar el DNI', fecha_limite: null }], { eventos: [{ titulo: 'Dentista', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }] });
-    afirmar('una cita y una tarea juntas: la tarea y el horario', t7.mensajes[0] === '✅ Llevar el DNI\nHorario: Dentista, mar 13 oct, de 10:00 a 11:00.', JSON.stringify(t7.mensajes));
+    afirmar('una cita y una tarea juntas: la tarea y el horario', t7.mensajes[0] === '✅ Llevar el DNI\n📅 Cita: Dentista, mar 13 oct, de 10:00 a 11:00.', JSON.stringify(t7.mensajes));
     // Salvaguardas
     const t8 = await resG([{ id: 'x' }]);
     afirmar('filas sin título (otros caminos, p. ej. guardar con archivos): se conserva la frase del modelo', t8.mensajes[0] === 'Apuntado: lo que diga el modelo, con muchas palabras.', JSON.stringify(t8.mensajes));
@@ -355,7 +355,7 @@ async function main() {
     }
     afirmar('el tema no distingue mayúsculas ni tildes', (await textos('/manual AGENDA'))[0].startsWith('*Agenda') && (await textos('/manual Notas'))[0].startsWith('*Notas'));
     const todo = await textos('/manual todo');
-    afirmar('/manual todo manda cada tema en su mensaje, en orden', todo.length === 10 && todo[0].startsWith('*Agenda') && todo.at(-1).startsWith('*Lo que recuerdo de ti'));
+    afirmar('/manual todo manda cada tema en su mensaje, en orden', todo.length === 11 && todo[0].startsWith('*Agenda') && todo.at(-1).startsWith('*De viaje'));
     const malo = await textos('/manual inventado');
     afirmar('un tema que no existe se dice y se enseña el índice', malo[0].startsWith('No tengo un tema «inventado».') && malo[0].includes('*Manual*'));
     afirmar('la agenda explica la regla de las alarmas (02:00 de mañana)', (await textos('/manual agenda'))[0].includes('02:00 de mañana'));
@@ -441,7 +441,7 @@ async function main() {
     // Resultado
     const res = (meta) => correr(nodo('resultado.js'), { input: [{ id: 'x' }], nodos: { Planificar: [{ meta }], 'Escribir en Supabase': [{ id: 'x' }] } });
     const rm = (await res((await textos('/manual todo', {}), (await cmd('/manual todo'))[0].meta)))[0];
-    afirmar('Resultado entrega los mensajes fijos tal cual, uno por mensaje de WhatsApp', rm.ok === true && rm.mensajes.length === 10 && rm.mensajes[0].startsWith('*Agenda'), JSON.stringify(rm.mensajes).slice(0, 100));
+    afirmar('Resultado entrega los mensajes fijos tal cual, uno por mensaje de WhatsApp', rm.ok === true && rm.mensajes.length === 11 && rm.mensajes[0].startsWith('*Agenda'), JSON.stringify(rm.mensajes).slice(0, 100));
     afirmar('el mensaje de fallo ya no manda a /help', !(await res({ ok: false, error: 'x', intencion: null, avisos: [] }))[0].mensajes[0].includes('/help'));
   }
 
@@ -529,10 +529,10 @@ async function main() {
     const ac2 = await planificar(respuesta({ intencion: 'aclarar', items: [], respuesta_usuario: '¿Qué día?' }));
     afirmar('aclarar sin pregunta usa respuesta_usuario con aviso', ac2[0].meta.pregunta === '¿Qué día?' && ac2[0].meta.avisos.length === 1);
 
-    const re = await planificar(respuesta({ intencion: 'recordar', items: [], memoria_nueva: { termino: ' ISW ', significado: 'Ingeniería del Software' } }));
+    const re = await planificar(respuesta({ intencion: 'recordar', items: [], memoria_nueva: { termino: ' ISW ', significado: 'Informática de Gestión' } }));
     afirmar('recordar: upsert por termino_norm y marcar mensaje', re.length === 2 && re[0].url === `${BASE}/memoria?on_conflict=termino_norm` && re[0].metodo === 'POST', JSON.stringify(re.map((p) => p.url)));
     afirmar('recordar: prefer de upsert', re[0].prefer === 'resolution=merge-duplicates,return=representation');
-    afirmar('recordar: término sin espacios', re[0].cuerpo.termino === 'ISW' && re[0].cuerpo.significado.startsWith('Ingeniería'));
+    afirmar('recordar: término sin espacios', re[0].cuerpo.termino === 'ISW' && re[0].cuerpo.significado.startsWith('Informática'));
   }
 
   console.log('Planificar: corregir y completar');
@@ -901,7 +901,7 @@ async function main() {
     afirmar('temperatura 0, JSON y mensaje como contenido de usuario', vacia.cuerpo.generationConfig.temperature === 0 && vacia.cuerpo.generationConfig.responseMimeType === 'application/json' && vacia.cuerpo.contents[0].parts[0].text === entrada.mensaje);
     afirmar('devuelve el modelo de la configuración', vacia.modelo === CONFIG.modelo);
 
-    const [conMem] = await montar([{ termino: 'ISW', significado: 'Ingeniería del Software', id: 'x', created_at: 'y' }, { termino: 'Tuti', significado: 'Mi vecina' }]);
+    const [conMem] = await montar([{ termino: 'ISW', significado: 'Informática de Gestión', id: 'x', created_at: 'y' }, { termino: 'Tuti', significado: 'Mi vecina' }]);
     const s2 = conMem.cuerpo.systemInstruction.parts[0].text;
     afirmar('inyecta la memoria solo con termino y significado', s2.includes('"termino":"ISW"') && s2.includes('"termino":"Tuti"') && !s2.includes('created_at'));
 
@@ -1399,6 +1399,9 @@ async function main() {
     afirmar('la lista es la respuesta y la ejecución va bien', lista.ok === true && lista.respuesta_usuario === ESPERADO && lista.error === null && lista.errores_escritura.length === 0);
     afirmar('nunca repite lo que dijo el modelo', !lista.respuesta_usuario.includes('Voy a mirar'));
     afirmar('los eventos pasados no se muestran', !lista.respuesta_usuario.includes('Reunión pasada'));
+    // las notas con carpeta de Drive van en «Notas», una cabecera por carpeta (su nombre; la ruta si dos se llaman igual)
+    const conCarpetas = await resultado(metaConsulta(), { lecturas: [{ tipo: 'nota', titulo: 'Idea suelta' }, { tipo: 'nota', titulo: 'El 1 de agosto me voy de viaje', carpeta: 'Viajes/Budapest' }, { tipo: 'nota', titulo: 'Hotel Tivoli', carpeta: 'Viajes/Lisboa' }, { tipo: 'nota', titulo: 'Llevar paraguas', carpeta: 'Viajes/Roma' }, { tipo: 'nota', titulo: 'Fotos del Coliseo', carpeta: 'Fotos/Roma' }] });
+    afirmar('«dame todo» con notas en carpetas: apartado «Notas» con «📂 Budapest», «📂 Lisboa» y la ruta entera para las dos «Roma»; la suelta, en Pensamientos', conCarpetas.respuesta_usuario === '*Notas*\n📂 *Budapest*\n• El 1 de agosto me voy de viaje\n📂 *Lisboa*\n• Hotel Tivoli\n📂 *Fotos/Roma*\n• Fotos del Coliseo\n📂 *Viajes/Roma*\n• Llevar paraguas\n\n*Pensamientos*\n• Idea suelta', `\n${conCarpetas.respuesta_usuario}`);
     const conRango = await resultado(metaConsulta({ con_rango: true }), { lecturas: FILAS });
     afirmar('con un rango de fechas sí se muestran los eventos pasados', conRango.respuesta_usuario.includes('Reunión pasada, jue 8 oct, 10:00'), conRango.respuesta_usuario);
     const hechas = await resultado(metaConsulta({ estado: 'hecho' }), { lecturas: FILAS });
@@ -1965,18 +1968,18 @@ async function main() {
     afirmar('un solo archivo: singular', r1.envios_archivos.length === 1 && r1.mensajes[0].startsWith('Aquí tienes el archivo:'));
     const siete = Array.from({ length: 7 }, () => arch({}));
     const r7 = await res({}, siete);
-    const veinticinco = Array.from({ length: 25 }, () => arch({}));
-    const r25 = await res({}, veinticinco);
-    afirmar('25 archivos: solo los 20 más recientes (los primeros de la lista) y se explica', r25.envios_archivos.length === 20 && r25.envios_archivos.map((x) => x.nombre).join() === veinticinco.slice(0, 20).map((x) => x.nombre).join() && r25.mensajes[0].startsWith('Hay 25 archivos. Te mando los 20 más recientes'), r25.mensajes[0]);
+    const treintaYCinco = Array.from({ length: 35 }, () => arch({}));
+    const r35 = await res({}, treintaYCinco);
+    afirmar('35 archivos: se mandan los 30 más recientes (los primeros de la lista) y de los otros 5 va el enlace («todos» son todos)', r35.envios_archivos.length === 30 && r35.envios_archivos.map((x) => x.nombre).join() === treintaYCinco.slice(0, 30).map((x) => x.nombre).join() && r35.mensajes[0].startsWith('Hay 35 archivos. Te mando los 30 más recientes') && r35.mensajes[1].startsWith('Los otros 5:') && treintaYCinco.slice(30).every((x) => r35.mensajes[1].includes(x.nombre)), JSON.stringify(r35.mensajes));
     afirmar('siete archivos: se mandan los siete (el tope ya no es 5)', r7.envios_archivos.length === 7);
     // Varias carpetas: agrupados por carpeta, en el orden alfabético de las listas, y dentro de cada una del más reciente al más antiguo
     const mezclados = [arch({ nombre: 'v1.jpg', carpeta_destino: 'Fotos/Viajes' }), arch({ nombre: 'f1.jpg', carpeta_destino: 'Fotos' }), arch({ nombre: 'v2.jpg', carpeta_destino: 'Fotos/Viajes' }), arch({ nombre: 'f2.jpg', carpeta_destino: 'Fotos' }), arch({ nombre: 'n1.jpg', carpeta_destino: null, items: { tipo: 'nota' } })];
     const rm = await res({}, mezclados);
     afirmar('varias carpetas: los archivos salen agrupados por carpeta (Fotos, Fotos/Viajes, Notas) y cada una conserva su orden', rm.envios_archivos.map((x) => x.ruta + ':' + x.nombre).join('|') === 'Fotos:f1.jpg|Fotos:f2.jpg|Fotos/Viajes:v1.jpg|Fotos/Viajes:v2.jpg|Notas:n1.jpg', rm.envios_archivos.map((x) => x.ruta + ':' + x.nombre).join('|'));
     afirmar('varias carpetas: el texto dice cuántos archivos y de cuántas carpetas', rm.mensajes[0] === 'Te mando 5 archivos de 3 carpetas:', rm.mensajes[0]);
-    const mas = Array.from({ length: 22 }, (_, i) => arch({ nombre: 'g' + i + '.jpg', carpeta_destino: i % 2 === 0 ? 'Fotos' : 'Zeta' }));
+    const mas = Array.from({ length: 32 }, (_, i) => arch({ nombre: 'g' + i + '.jpg', carpeta_destino: i % 2 === 0 ? 'Fotos' : 'Zeta' }));
     const rmas = await res({}, mas);
-    afirmar('más del tope con varias carpetas: se cogen los 20 más recientes y luego se agrupan; el texto lo explica', rmas.envios_archivos.length === 20 && rmas.envios_archivos.slice(0, 10).every((x) => x.ruta === 'Fotos') && rmas.envios_archivos.slice(10).every((x) => x.ruta === 'Zeta') && rmas.mensajes[0].startsWith('Hay 22 archivos. Te mando los 20 más recientes de 2 carpetas:'), rmas.mensajes[0]);
+    afirmar('más del tope con varias carpetas: se cogen los 30 más recientes y luego se agrupan; el texto lo explica', rmas.envios_archivos.length === 30 && rmas.envios_archivos.slice(0, 15).every((x) => x.ruta === 'Fotos') && rmas.envios_archivos.slice(15).every((x) => x.ruta === 'Zeta') && rmas.mensajes[0].startsWith('Hay 32 archivos. Te mando los 30 más recientes de 2 carpetas'), rmas.mensajes[0]);
     const rt = await res({ tipo: 'documento' }, [arch({}), arch({ nombre: 'Contrato.pdf', tipo_mime: 'application/pdf', carpeta_destino: null, items: { tipo: 'nota' } })]);
     afirmar('el filtro de tipo se respeta al mandar', rt.envios_archivos.length === 1 && rt.envios_archivos[0].nombre === 'Contrato.pdf');
     const rc = await res({ carpeta: 'fotos' }, [arch({}), arch({ carpeta_destino: 'Facturas' })]);
@@ -2076,7 +2079,7 @@ async function main() {
     const r7 = await conMeta({ recordatorios: [{ titulo: '*Ropa* _ya_', recordar_en: '2026-10-10T16:30:00.000Z' }, { titulo: 'Otra', recordar_en: '2026-10-10T17:00:00.000Z' }] });
     afirmar('varios recordatorios: uno por línea y sin caracteres de formato', r7.mensajes[0].split('\n').filter((l) => l.startsWith('🔔')).length === 2 && r7.mensajes[0].includes('🔔 Ropa ya: hoy'), r7.mensajes[0]);
     const r8 = await conMeta({ eventos: [{ titulo: 'Dentista', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }], recordatorios: [{ titulo: 'Ropa', recordar_en: '2026-10-10T16:30:00.000Z' }] });
-    afirmar('un mensaje con un evento y un recordatorio dice las dos cosas', r8.mensajes[0].includes('Horario: Dentista') && r8.mensajes[0].includes('🔔 Ropa:'), r8.mensajes[0]);
+    afirmar('un mensaje con un evento y un recordatorio dice las dos cosas', r8.mensajes[0].includes('📅 Cita: Dentista') && r8.mensajes[0].includes('🔔 Ropa:'), r8.mensajes[0]);
     const lista = (await correr(nodo('resultado.js'), { input: [{ tipo: 'tarea', titulo: 'Sacar la ropa', recordar_en: '2026-10-10T16:30:00+00:00' }, { tipo: 'tarea', titulo: 'Entregar informe', fecha_limite: '2026-10-13T21:59:59+00:00' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: AHORA, consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 } } }], 'Escribir en Supabase': [{ id: 'x' }] } }))[0];
     afirmar('el recordatorio sale en su sección Alarmas, con su hora de aviso, y no entre las tareas', lista.mensajes[0].includes('*Alarmas*\n• 🔔 Sacar la ropa, sáb 10 oct, 18:30') && lista.mensajes[0].includes('• Entregar informe (mar 13 oct)') && !lista.mensajes[0].includes('• Sacar la ropa (') , lista.mensajes[0]);
   }
@@ -2530,18 +2533,18 @@ async function main() {
     // horario
     const hor = (eventos) => res({ intencion: 'guardar', respuesta_usuario: 'Apuntado: dentista mañana a las 10.', eventos }, { escrituras: [{ id: 'x' }] });
     const e1 = await hor([{ titulo: 'Dentista', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }]);
-    afirmar('un evento de una hora: la confirmación lleva el horario y no avisa de la duración', e1.mensajes[0] === 'Apuntado: dentista mañana a las 10.\nHorario: Dentista, mar 13 oct, de 10:00 a 11:00.', e1.mensajes[0]);
+    afirmar('un evento de una hora: la confirmación lleva el horario y no avisa de la duración', e1.mensajes[0] === 'Apuntado: dentista mañana a las 10.\n📅 Cita: Dentista, mar 13 oct, de 10:00 a 11:00.', e1.mensajes[0]);
     const e2 = await hor([{ titulo: 'Entrevista', inicio: '2026-10-15T07:00:00.000Z', fin: '2026-10-15T09:30:00.000Z', minutos: 150 }]);
-    afirmar('un evento de otra duración: horario sin el aviso', e2.mensajes[0].endsWith('Horario: Entrevista, jue 15 oct, de 09:00 a 11:30.'));
+    afirmar('un evento de otra duración: horario sin el aviso', e2.mensajes[0].endsWith('📅 Cita: Entrevista, jue 15 oct, de 09:00 a 11:30.'));
     const e3 = await hor([{ titulo: 'A', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }, { titulo: 'B', inicio: '2026-10-14T08:00:00.000Z', fin: '2026-10-14T10:00:00.000Z', minutos: 120 }]);
-    afirmar('varios eventos: un horario por evento y sin aviso de duración', e3.mensajes[0].includes('Horario: A, mar 13 oct, de 10:00 a 11:00; B, mié 14 oct, de 10:00 a 12:00.') && !e3.mensajes[0].includes('dime cuánto'));
+    afirmar('varios eventos: un horario por evento y sin aviso de duración', e3.mensajes[0].includes('📅 Citas: A, mar 13 oct, de 10:00 a 11:00; B, mié 14 oct, de 10:00 a 12:00.') && !e3.mensajes[0].includes('dime cuánto'));
     afirmar('sin eventos (o con la lista vacía) la confirmación no cambia', (await hor(undefined)).mensajes[0] === 'Apuntado: dentista mañana a las 10.' && (await hor([])).mensajes[0] === 'Apuntado: dentista mañana a las 10.');
     const otra = await res({ intencion: 'corregir', respuesta_usuario: 'Cambiado.', eventos: [{ titulo: 'A', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }] }, { escrituras: [{ id: 'x' }] });
     afirmar('el horario solo se añade al guardar', otra.mensajes[0] === 'Cambiado.');
     const fm = await res({ ok: false, error: 'x', intencion: 'guardar', respuesta_usuario: 'Prometo', eventos: [{ titulo: 'A', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T09:00:00.000Z', minutos: 60 }] });
     afirmar('si algo falló no se enseña ningún horario (nada se guardó)', fm.ok === false && !fm.mensajes[0].includes('Horario'));
     const sucioH = await hor([{ titulo: 'Cita *con* _el_ dentista', inicio: '2026-10-13T08:00:00.000Z', fin: '2026-10-13T10:00:00.000Z', minutos: 120 }]);
-    afirmar('el título del horario se limpia de caracteres de formato de WhatsApp', sucioH.mensajes[0].includes('Horario: Cita con el dentista,'));
+    afirmar('el título del horario se limpia de caracteres de formato de WhatsApp', sucioH.mensajes[0].includes('📅 Cita: Cita con el dentista,'));
   }
 
   console.log('Proyectos, cancelar y completar en bloque, añadir contenido, buscar');
@@ -2704,7 +2707,7 @@ async function main() {
     afirmar('buscar con un rango de fechas: las dos condiciones con and()', and3 && and3.startsWith('(or(and(fecha_inicio') && and3.includes('or(titulo.ilike.*casero*') && parametro(q3[0].meta.consulta_url, 'or') === null, and3);
     const q4 = await q({ buscar: '¿¿??' });
     afirmar('buscar solo con signos: sin búsqueda', q4[0].meta.consulta.buscar === null && !q4[0].meta.consulta_url.includes('ilike'));
-    afirmar('la consulta ya no pide etiquetas y sí el proyecto', q1[0].meta.consulta_url.includes('recordar_en,proyecto') && !q1[0].meta.consulta_url.includes('mensajes') && !q1[0].meta.consulta_url.includes('etiquetas'));
+    afirmar('la consulta ya no pide etiquetas y sí el proyecto', q1[0].meta.consulta_url.includes('recordar_en,zona_alarma,lugar_alarma,proyecto,carpeta') && !q1[0].meta.consulta_url.includes('mensajes') && !q1[0].meta.consulta_url.includes('etiquetas'));
 
     // Resultado
     const resV10 = (meta, { escrituras = [{}], lecturas = [{}], construccion = {} } = {}) =>
@@ -3182,10 +3185,10 @@ async function main() {
     const nombres = flujo.nodes.map((n) => n.name);
     const porNombre = (n) => flujo.nodes.find((x) => x.name === n);
 
-    afirmar('42 nodos de trabajo y 6 notas', codigoNodos.length === 42 && flujo.nodes.length === 48, `${codigoNodos.length}/${flujo.nodes.length}`);
+    afirmar('44 nodos de trabajo y 6 notas', codigoNodos.length === 44 && flujo.nodes.length === 50, `${codigoNodos.length}/${flujo.nodes.length}`);
     afirmar('nombres e ids únicos', new Set(nombres).size === nombres.length && new Set(flujo.nodes.map((n) => n.id)).size === flujo.nodes.length);
     afirmar('las conexiones solo nombran nodos existentes', Object.entries(flujo.connections).every(([origen, c]) => nombres.includes(origen) && c.main[0].every((d) => nombres.includes(d.node))));
-    afirmar('cadena lineal, la rama de carpetas y la papelera, el segundo disparador y la salida con anotación', Object.keys(flujo.connections).length === 41, String(Object.keys(flujo.connections).length));
+    afirmar('cadena lineal, la rama de carpetas y la papelera, el segundo disparador y la salida con anotación', Object.keys(flujo.connections).length === 43, String(Object.keys(flujo.connections).length));
     afirmar('el flujo principal ya no espera ni lleva la cola (vive en el flujo de WhatsApp: un Wait en un subflujo no es fiable)', !flujo.nodes.some((n) => n.type === 'n8n-nodes-base.wait') && !nombres.some((n) => ['Reclamar mensajes', 'Juntar mensajes', 'Liberar turno', 'Sin respuesta'].includes(n)) && flujo.connections['Guardar mensaje'].main[0][0].node === 'Leer memoria');
     const guardar = porNombre('Guardar mensaje');
     afirmar('Guardar mensaje: upsert por wa_message_id (la fila ya la creó la cola) con el texto juntado y la cita', guardar.parameters.url.endsWith('/rest/v1/mensajes?on_conflict=wa_message_id') && guardar.parameters.headerParameters.parameters[0].value === 'resolution=merge-duplicates,return=representation' && guardar.parameters.jsonBody.includes('texto_original: $json.mensaje') && guardar.parameters.jsonBody.includes('contexto_wa_id') && !guardar.parameters.jsonBody.includes('en_cola'));
@@ -3228,7 +3231,7 @@ async function main() {
 
     const pendientes = porNombre('Leer items pendientes');
     afirmar('Leer items pendientes: solo pendientes, recientes primero, tope de 200', pendientes.parameters.url.includes('estado=eq.pendiente') && pendientes.parameters.url.includes('order=created_at.desc&limit=200') && pendientes.alwaysOutputData === true && pendientes.parameters.method === 'GET');
-    afirmar('Leer items pendientes: pide el contenido y el proyecto (para enseñarlos y añadir detalles) y cuándo se apuntó (para un «tarea» suelto)', pendientes.parameters.url.includes('select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,proyecto,created_at&'));
+    afirmar('Leer items pendientes: pide el contenido y el proyecto (para enseñarlos y añadir detalles), la zona de las alarmas (base de datos al día), la carpeta de las notas (base de datos al día) y cuándo se apuntó (para un «tarea» suelto)', pendientes.parameters.url.includes('select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,zona_alarma,lugar_alarma,proyecto,carpeta,created_at&'));
 
     const escribir = porNombre('Escribir en Supabase');
     afirmar('Escribir: método y URL por expresión, continúa ante error', escribir.parameters.method === '={{ $json.metodo }}' && escribir.parameters.url === '={{ $json.url }}' && escribir.onError === 'continueRegularOutput');
@@ -3236,7 +3239,9 @@ async function main() {
     const lectura = porNombre('Leer consulta');
     afirmar('Leer consulta: GET sin cuerpo, una vez por mensaje, siempre con salida', lectura.parameters.method === 'GET' && lectura.parameters.sendBody === undefined && lectura.executeOnce === true && lectura.alwaysOutputData === true && lectura.onError === 'continueRegularOutput');
     afirmar('Leer consulta: usa la URL que prepara Planificar', lectura.parameters.url === "={{ $('Planificar').first().json.meta.consulta_url }}");
-    afirmar('Leer consulta va entre Escribir y ¿Listar carpetas?', flujo.connections['Escribir en Supabase'].main[0][0].node === 'Leer consulta' && flujo.connections['Leer consulta'].main[0][0].node === '¿Listar carpetas?');
+    afirmar('Leer archivos de Drive y Leer consulta van entre Escribir y ¿Listar carpetas?', flujo.connections['Escribir en Supabase'].main[0][0].node === 'Leer archivos de Drive' && flujo.connections['Leer archivos de Drive'].main[0][0].node === 'Leer consulta' && flujo.connections['Leer consulta'].main[0][0].node === '¿Listar carpetas?');
+    const lecturaDrive = porNombre('Leer archivos de Drive');
+    afirmar('Leer archivos de Drive: GET una vez por mensaje, siempre con salida, sin cortar el flujo si falla; con las demás intenciones, la lectura inocua', lecturaDrive.parameters.method === 'GET' && lecturaDrive.executeOnce === true && lecturaDrive.alwaysOutputData === true && lecturaDrive.onError === 'continueRegularOutput' && lecturaDrive.parameters.url.includes('consulta_drive_url ||') && lecturaDrive.parameters.url.includes('consulta_url'));
     const si = porNombre('¿Listar carpetas?');
     afirmar('¿Listar carpetas?: mira la meta de Planificar; sí va a los listados de Drive y no directo a Resultado', si.type === 'n8n-nodes-base.if' && JSON.stringify(si.parameters).includes("$('Planificar').first().json.meta.carpetas") && flujo.connections['¿Listar carpetas?'].main[0][0].node === 'Listar nivel 1' && flujo.connections['¿Listar carpetas?'].main[1][0].node === 'Resultado');
     const rama = ['Listar nivel 1', 'Listar nivel 2', 'Listar nivel 3', 'Contar archivos', 'Revisar Drive', '¿Mandar a la papelera?'];
@@ -3311,12 +3316,13 @@ async function main() {
     const sinLote = await planificar({ saltar_modelo: true }, { mensaje: 'Ponlo en Fotos', refsArchivos: ARCH_IDS, carpetasConocidas: CONOC });
     afirmar('sin un lote reciente, «ponlo en Fotos» no archiva nada por código', archivados(sinLote).length === 0);
 
-    // Carpeta parecida: se pregunta antes de crear una casi repetida
-    const p1 = await conLote('Ponlo en Budapest ahora mismo'.replace(' ahora mismo', ''), { carpetasConocidas: CONOC.filter((c) => c.ruta !== 'Budapest') });
-    const preg = p1.find((x) => x.etiqueta === 'actualizar mensaje')?.cuerpo;
-    afirmar('«Ponlo en Budapest» con «Viajes/Budapest» y sin «Budapest»: no archiva y pregunta dónde', archivados(p1).length === 0 && preg?.pregunta_pendiente === true && preg.pregunta === 'No tengo «Budapest», pero sí:\n1. Viajes/Budapest\n2. Crear «Budapest»\n¿Dónde las guardo?', preg?.pregunta);
-    const turno = JSON.parse(preg.hilo.at(-1).texto);
-    afirmar('la pregunta guarda las opciones, la ruta nueva y los ids reales de los archivos (no sus referencias, que cambian)', turno.motivo === 'carpeta_parecida' && turno.origen === 'codigo' && JSON.stringify(turno.opciones) === JSON.stringify(['Viajes/Budapest']) && turno.nueva === 'Budapest' && JSON.stringify(turno.archivos) === JSON.stringify([ARCH_IDS.a1, ARCH_IDS.a2]));
+    // Carpeta parecida con UNA sola candidata: se guarda ahí sin preguntar y se dice (antes se preguntaba)
+    const p1 = await conLote('Ponlo en Budapest', { carpetasConocidas: CONOC.filter((c) => c.ruta !== 'Budapest') });
+    afirmar('«Ponlo en Budapest» con solo «Viajes/Budapest»: archiva ahí sin preguntar y lo dice', archivados(p1).length === 2 && archivados(p1).every((x) => x.cuerpo.carpeta_destino === 'Viajes/Budapest') && !p1.some((x) => x.cuerpo?.pregunta_pendiente === true) && p1[0].meta.nota_zona === '📂 No tenías «Budapest»: lo he guardado en «Viajes/Budapest». Si querías una carpeta nueva, dime «crea la carpeta Budapest».', JSON.stringify(p1[0].meta.nota_zona));
+    // La pregunta de cuando hay varias, y sus respuestas (con su turno de código tal como lo guarda Planificar)
+    const textoPreg = 'No tengo «Budapest», pero sí:\n1. Viajes/Budapest\n2. Crear «Budapest»\n¿Dónde las guardo?';
+    const turno = { intencion: 'aclarar', motivo: 'carpeta_parecida', origen: 'codigo', opciones: ['Viajes/Budapest'], nueva: 'Budapest', archivos: [ARCH_IDS.a1, ARCH_IDS.a2], nombre: null, pregunta: textoPreg, items: [], respuesta_usuario: textoPreg };
+    const preg = { pregunta: textoPreg, hilo: [{ rol: 'user', texto: 'Ponlo en Budapest' }, { rol: 'model', texto: JSON.stringify(turno) }] };
     const hiloP = preg.hilo;
     const contesta = (mensaje, refs = { a7: ARCH_IDS.a1, a9: ARCH_IDS.a2 }) => planificar({ saltar_modelo: true }, { mensaje, refsArchivos: refs, carpetasConocidas: CONOC.filter((c) => c.ruta !== 'Budapest'), pendienteId: 'p-carpeta', hiloPrevio: hiloP });
     const r1 = await contesta('1');
@@ -3372,7 +3378,7 @@ async function main() {
     }
     afirmar('sin carpetas conocidas, «mueve Budapest a Viajes» lo decide el modelo (sin la palabra «carpeta» no hay forma de saberlo)', (await planificar({ saltar_modelo: true }, { mensaje: 'mueve Budapest a Viajes' }))[0].meta.intencion !== 'mover_carpeta');
 
-    // Fallo real del 2026-10-24: «Pon la carpeta Budapest dentro de la carpeta de viajes» → rechazo; «Mueve los archivos» → «¿A qué archivos?»
+    // «Pon la carpeta Budapest dentro de la carpeta de viajes» → rechazo; «Mueve los archivos» → «¿A qué archivos?»
     const r24 = await planificar({ saltar_modelo: true }, { mensaje: 'Pon la carpeta Budapest dentro de la carpeta de viajes', carpetasConocidas: CONOC });
     afirmar('«…dentro de la carpeta de viajes»: «de viajes» es Viajes, y como ya hay Viajes/Budapest se juntan', r24[0].meta.intencion === 'mover_archivos' && r24[0].meta.mover_archivos?.juntar === true && r24[0].meta.mover_archivos.destino === 'Viajes/Budapest', JSON.stringify(r24[0].meta.mover_archivos ?? r24[0].meta.mover_carpeta));
     const cmdS = new Function(`return ${codigoComandos()}`)();
@@ -3548,7 +3554,7 @@ async function main() {
     const P79 = [
       { id: 't-contrato', tipo: 'tarea', titulo: 'Firmar contrato' }, { id: 't-beca', tipo: 'tarea', titulo: 'Hacer solicitud de beca' },
       { id: 't-asturias', tipo: 'tarea', titulo: 'Planificar viaje a Asturias' }, { id: 't-esqui', tipo: 'tarea', titulo: 'Planificar viaje a esquiar' },
-      { id: 't-insta', tipo: 'tarea', titulo: 'Empezar el proyecto', proyecto: 'Instagram' }, { id: 'e-pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-10-30T09:30:00Z' },
+      { id: 't-insta', tipo: 'tarea', titulo: 'Empezar el proyecto', proyecto: 'Web' }, { id: 'e-pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-10-30T09:30:00Z' },
     ];
     const MSG79 = '•\u2060  \u2060Hacer solicitud de beca\n•\u2060  \u2060Terminar trabajo del curso\n\nEsto es lo único que me queda por hacer en tareas borra lo demás';
     const r79 = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['t-asturias', 't-esqui', 't-insta', 't-contrato'] } }), { mensaje: MSG79, pendientes: P79 });
@@ -3556,7 +3562,7 @@ async function main() {
     afirmar('«…en tareas borra lo demás»: no quita la tarea del proyecto (no es de Tareas) y lo apunta para decirlo', c79 && !c79.url.includes('t-insta') && ['t-asturias', 't-esqui', 't-contrato'].every((id) => c79.url.includes(id)) && JSON.stringify(r79[0].meta.fuera_de_seccion) === JSON.stringify({ seccion: 'tareas', titulos: ['Empezar el proyecto'] }), JSON.stringify([c79?.url, r79[0].meta.fuera_de_seccion]));
     const res79 = await correr(nodo('resultado.js'), { input: [{ id: 'x' }], nodos: { Planificar: [{ meta: r79[0].meta }], 'Escribir en Supabase': [{ id: 't-asturias', titulo: 'Planificar viaje a Asturias' }, { id: 't-esqui', titulo: 'Planificar viaje a esquiar' }, { id: 't-contrato', titulo: 'Firmar contrato' }] } }).then((x) => x[0]);
     afirmar('Resultado: lo dice («No he tocado «Empezar el proyecto»: no es de tus tareas»)', res79.mensajes[0] === 'Quitados: «Planificar viaje a Asturias», «Planificar viaje a esquiar», «Firmar contrato».\nNo he tocado «Empezar el proyecto»: no es de tus tareas.', res79.mensajes[0]);
-    const conProyecto = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['t-insta'] } }), { mensaje: 'borra la tarea del proyecto Instagram', pendientes: P79 });
+    const conProyecto = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['t-insta'] } }), { mensaje: 'borra la tarea del proyecto Web', pendientes: P79 });
     afirmar('si se habla del proyecto, sí se quita la tarea del proyecto', conProyecto.find((x) => x.etiqueta === 'cancelar items')?.url.includes('t-insta'));
     const soloFuera = await planificar(respuesta({ intencion: 'cancelar', items: [], cancelar: { item_ids: ['e-pelu'] } }), { mensaje: 'borra las tareas de la peluquería', pendientes: P79 });
     afirmar('si todo lo elegido es de otra sección, no se toca nada y se dice', !soloFuera.some((x) => x.etiqueta === 'cancelar items') && soloFuera[0].meta.respuesta_usuario.startsWith('No he tocado nada'), JSON.stringify(soloFuera[0].meta.respuesta_usuario));
@@ -3572,6 +3578,44 @@ async function main() {
     const filasTodo = [{ tipo: 'tarea', titulo: 'Hacer solicitud de beca' }, { tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2099-10-30T09:30:00Z' }, { tipo: 'tarea', titulo: 'Horno', recordar_en: '2099-10-30T09:30:00Z' }, { tipo: 'evento', titulo: 'Examen', fecha_inicio: '2099-11-04T17:00:00Z' }];
     const resTodo = await correr(nodo('resultado.js'), { input: filasTodo, nodos: { Planificar: [{ meta: { ok: true, error: null, intencion: 'consultar', avisos: [], respuesta_usuario: '', pregunta: null, ahora: '2026-10-24T16:00:00.000Z', consulta: { tipo: null, lista: null, estado: 'pendiente', sin_agenda: true }, consulta_url: 'x' } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((x) => x[0]).catch((e) => ({ error: String(e) }));
     afirmar('«Dame todo»: sin las secciones Citas ni Alarmas y con una línea de cuántas hay aparte', typeof resTodo.respuesta_usuario === 'string' && resTodo.respuesta_usuario.includes('*Tareas*') && !resTodo.respuesta_usuario.includes('*Citas*') && !resTodo.respuesta_usuario.includes('*Alarmas*') && resTodo.respuesta_usuario.includes('Aparte tienes 2 citas y 1 alarma: «dame las citas».'), JSON.stringify(resTodo).slice(0, 600));
+
+    // «dame todos los archivos de la carpeta Fotos» = todo lo de Drive, también lo subido a mano
+    const cmd81 = new Function(`return ${codigoComandos()}`)();
+    const R81 = ['Fotos', 'Fotos/Viajes', 'Viajes/Budapest'];
+    for (const [frase, esperado] of [
+      ['pásame las fotos de Budapest', { carpeta: 'Viajes/Budapest', tipo: 'imagen', enviar: true }],
+      ['dame todos los archivos de la carpeta Fotos', { carpeta: 'Fotos', tipo: null, enviar: true }],
+      ['dame todo lo del drive de Fotos', { carpeta: 'Fotos', tipo: null, enviar: true }],
+      ['dame los pdf de Fotos', { carpeta: 'Fotos', tipo: 'pdf', enviar: true }],
+    ]) {
+      const r = cmd81.interpretarVerArchivos(frase, R81);
+      afirmar(`«${frase}» → ${JSON.stringify(esperado)}`, JSON.stringify(r) === JSON.stringify(esperado), JSON.stringify(r));
+    }
+    for (const frase of ['dame todo lo de Fotos', 'dame los archivos de Lisboa', 'dame todo']) {
+      afirmar(`«${frase}»: no es «todos los archivos de X» (lo decide otro camino)`, cmd81.interpretarVerArchivos(frase, R81) === null, JSON.stringify(cmd81.interpretarVerArchivos(frase, R81)));
+    }
+    const v81 = await planificar({ saltar_modelo: true }, { mensaje: 'dame todos los archivos de la carpeta Fotos', carpetasConocidas: R81.map((ruta) => ({ ruta })) });
+    afirmar('Planificar: ver_archivos de la carpeta para mandar todo, leyendo también la foto del árbol de Drive', v81[0].meta.intencion === 'ver_archivos' && v81[0].meta.consulta_archivos.carpeta === 'Fotos' && v81[0].meta.consulta_archivos.enviar === true && v81[0].meta.consulta_archivos.tipo === null && Boolean(v81[0].meta.consulta_drive_url), JSON.stringify(v81[0].meta));
+    const AH81 = '2026-11-06T12:00:00.000Z';
+    const res81 = (filtro, lecturas, foto) => correr(nodo('resultado.js'), {
+      input: lecturas,
+      nodos: { Planificar: [{ meta: { ok: true, intencion: 'ver_archivos', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: AH81, consulta_drive_url: 'x', consulta_archivos: { carpeta: null, tipo: null, solo_pendientes: false, enviar: true, ...filtro } } }], 'Escribir en Supabase': [{ id: 'm' }], 'Leer archivos de Drive': foto },
+    }).then((x) => x[0]);
+    const regFoto = { nombre: 'Contrato.pdf', drive_file_id: 'ID_DRIVE_IC01', drive_url: 'https://drive.google.com/file/d/ID_DRIVE_IC01/view', created_at: '2026-11-01T10:00:00Z', tipo_mime: 'application/pdf', carpeta_destino: 'Fotos', estado: 'asignado', items: null };
+    const regOtra = { nombre: 'playa.jpg', drive_file_id: 'ID_DRIVE_OT01', drive_url: 'x', created_at: '2026-11-03T10:00:00Z', tipo_mime: 'image/jpeg', carpeta_destino: 'Viajes/Budapest', estado: 'asignado', items: null };
+    const foto81 = [
+      { drive_id: 'ID_DRIVE_IC01', nombre: 'Contrato.pdf', ruta: 'Fotos/Contrato.pdf', created_at: '2026-11-01T10:00:00Z' },
+      { drive_id: 'ID_DRIVE_MAN1', nombre: 'Apuntes tema 2.pdf', ruta: 'Fotos/Apuntes tema 2.pdf', created_at: '2026-11-04T10:00:00Z' },
+      { drive_id: 'ID_DRIVE_MAN2', nombre: 'Enunciado.docx', ruta: 'Fotos/Viajes/Enunciado.docx', created_at: '2026-11-05T10:00:00Z' },
+      { drive_id: 'ID_DRIVE_MAN3', nombre: 'otra.png', ruta: 'Viajes/Budapest/otra.png', created_at: '2026-11-05T11:00:00Z' },
+    ];
+    const todosF = await res81({ carpeta: 'Fotos' }, [regFoto, regOtra], foto81);
+    afirmar('Resultado: todos los de la carpeta por su registro y los subidos a mano (también en subcarpetas), sin repetir ni colar otros', todosF.envios_archivos.map((x) => x.nombre).sort().join('|') === ['Apuntes tema 2.pdf', 'Enunciado.docx', 'Contrato.pdf'].sort().join('|'), JSON.stringify(todosF.envios_archivos.map((x) => x.nombre)));
+    const pdfsF = await res81({ carpeta: 'Fotos', tipo: 'pdf' }, [regFoto, regOtra], foto81);
+    afirmar('Resultado: con «los pdf», solo los pdf (también uno subido a mano, por su extensión)', pdfsF.envios_archivos.map((x) => x.nombre).sort().join('|') === 'Apuntes tema 2.pdf|Contrato.pdf', JSON.stringify(pdfsF.envios_archivos.map((x) => x.nombre)));
+    const sinFoto = await res81({ carpeta: 'Fotos' }, [regFoto, regOtra], [{ error: { message: 'relation drive_arbol' } }]);
+    afirmar('Resultado: si la foto del árbol no se puede leer, salen al menos los registrados (no es un fallo)', sinFoto.ok === true && sinFoto.envios_archivos.length === 1);
+
 
     // El modelo dice que no puede mover: se corrige, también en una pregunta (visto el 2026-10-23)
     const niega = await planificar(respuesta({ intencion: 'aclarar', pregunta: 'No puedo mover carpetas en Drive. ¿Quieres que cree la carpeta «Viajes/Budapest» o te lo apunto como tarea?', respuesta_usuario: 'x' }), { mensaje: 'Mueve Budapest a Viajes' });
@@ -3685,7 +3729,485 @@ async function main() {
     const evaluaUrl = (u) => u.replace(/^=/, '').replace(/\{\{([\s\S]+?)\}\}/g, (_, e) => String(new Function('$', `return (${e});`)((n) => ({ first: () => ({ json: n === 'Configuración' ? { config: { ...CONFIG, supabase_url: 'https://abc.supabase.co', memoria_mensajes: 5, memoria_min: 120 } } : { id: 'm', created_at: '2026-10-23T13:10:00.123+00:00' } }) }))));
     const u = evaluaUrl(urlConv);
     afirmar('Leer conversación: los mensajes contestados de las últimas 2 h, ANTERIORES a este (con el «+» de la hora codificado), lo último primero, con margen sobre MEMORIA_MENSAJES', u.startsWith('https://abc.supabase.co/rest/v1/mensajes?select=wa_message_id,tipo_entrada,texto_original,respuesta_texto,hilo,created_at&respuesta_texto=not.is.null&created_at=gte.') && u.includes('&created_at=lt.2026-10-23T13%3A10%3A00.123%2B00%3A00&order=created_at.desc&limit=8') && nf('Leer conversación').executeOnce === true && nf('Leer conversación').onError === 'continueRegularOutput', u);
-    afirmar('la cadena de lecturas: … Leer quitados → Leer carpetas → Leer conversación → Construir petición', fl.connections['Leer quitados'].main[0][0].node === 'Leer carpetas' && fl.connections['Leer carpetas'].main[0][0].node === 'Leer conversación' && fl.connections['Leer conversación'].main[0][0].node === 'Construir petición');
+    afirmar('la cadena de lecturas: … Leer quitados → Leer carpetas → Leer conversación → Leer viaje → Construir petición', fl.connections['Leer quitados'].main[0][0].node === 'Leer carpetas' && fl.connections['Leer carpetas'].main[0][0].node === 'Leer conversación' && fl.connections['Leer conversación'].main[0][0].node === 'Leer viaje' && fl.connections['Leer viaje'].main[0][0].node === 'Construir petición');
+    {
+      const lv = fl.nodes.find((n) => n.name === 'Leer viaje');
+      afirmar('Leer viaje: POST a viajes_vigentes (el actual y los próximos), una sola vez, siempre con salida y sin cortar el flujo (sin la base de datos al día falla y no hay viaje)', lv && lv.parameters.url.endsWith('/rest/v1/rpc/viajes_vigentes') && lv.parameters.method === 'POST' && lv.executeOnce === true && lv.alwaysOutputData === true && lv.onError === 'continueRegularOutput' && lv.parameters.nodeCredentialType === 'supabaseApi');
+    }
+  }
+
+  console.log('Viajes y zona horaria');
+  {
+    const cmd = new Function(`return ${codigoComandos()}`)();
+    const ahora = new Date();
+    const iv = (m) => cmd.interpretarViaje(m, ahora);
+    afirmar('«Estoy en Portugal» → Portugal, Europe/Lisbon, sin fecha', JSON.stringify(iv('Estoy en Portugal')) === JSON.stringify({ tipo: 'lugar', pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null }), JSON.stringify(iv('Estoy en Portugal')));
+    const conHasta = iv('Acabo de llegar a Lisboa hasta el domingo');
+    afirmar('«Acabo de llegar a Lisboa hasta el domingo» → Portugal con el domingo que viene', conHasta?.zona === 'Europe/Lisbon' && /^\d{4}-\d{2}-\d{2}$/.test(conHasta.hasta) && new Date(`${conHasta.hasta}T12:00:00Z`).getUTCDay() === 0, JSON.stringify(conHasta));
+    afirmar('«Me voy a Nueva York» → la zona de Nueva York', iv('Me voy a Nueva York')?.zona === 'America/New_York');
+    afirmar('«Estoy en Estados Unidos» → pregunta la ciudad (varias zonas)', JSON.stringify(iv('Estoy en Estados Unidos')) === JSON.stringify({ tipo: 'multizona', pais: 'Estados Unidos' }));
+    afirmar('«He vuelto», «Ya estoy en casa», «ya estoy en España» → vuelta', ['He vuelto', 'Ya estoy en casa', 'ya estoy en España', 'Estoy de vuelta'].every((m) => iv(m)?.tipo === 'vuelta'));
+    afirmar('«¿Dónde estoy?» → estado; /viaje, /zona y /trip son un comando (no «No conozco el comando»)', iv('¿Dónde estoy?')?.tipo === 'estado' && ['/viaje', '/zona', '/trip'].every((c) => cmd.interpretarComando(c, { ahora, nombre: 'Lola' })?.tipo === 'viaje'));
+    afirmar('lo que no es un viaje no se toca: «estoy en clase», «estoy en casa», «estoy en el médico», «voy a comprar pan el 20»', ['estoy en clase', 'estoy en casa', 'estoy en el médico', 'apunta comprar pan', 'voy a comprar pan el 20', 'el 20 me voy a casa'].every((m) => iv(m) === null));
+    const ph = (t) => cmd.parseHasta(t, ahora);
+    afirmar('«el domingo», «hasta el 3 de diciembre», «15/12», «una semana», «el 15» → una fecha futura', ['el domingo', 'hasta el 3 de diciembre', '15/12', 'una semana', 'el 15', 'mañana', 'dentro de 10 días'].every((t) => /^\d{4}-\d{2}-\d{2}$/.test(ph(t)?.fecha ?? '') && ph(t).fecha >= new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(ahora)), JSON.stringify(['el domingo', 'hasta el 3 de diciembre', '15/12', 'una semana', 'el 15'].map(ph)));
+    afirmar('«no lo sé», «ni idea» → no lo sabe', ph('No lo sé')?.no_se === true && ph('ni idea')?.no_se === true);
+    afirmar('una fecha tiene que ser TODO el mensaje: «mañana dentista a las 10», «el domingo voy al cine» no lo son', ph('mañana dentista a las 10') === null && ph('el domingo voy al cine') === null && ph('31/02') === null);
+    afirmar('hora de reloj: «alarma a las 14:00», «mañana a las 9 dentista», «cita 16.30» sí; «en 20 minutos», «dentro de una hora» no', ['alarma a las 14:00', 'mañana a las 9 dentista', 'cita 16.30', 'a la 1 llamar'].every(cmd.diceHoraDeReloj) && !['recuérdame en 20 minutos', 'avísame dentro de una hora', 'en media hora'].some(cmd.diceHoraDeReloj));
+    const invierno = new Date('2027-01-20T12:00:00Z');
+    afirmar('diferencia con España: Lisboa −60, Tokio +480, Canarias −60, París 0 (en enero)', cmd.difConEspana('Europe/Lisbon', invierno) === -60 && cmd.difConEspana('Asia/Tokyo', invierno) === 480 && cmd.difConEspana('Atlantic/Canary', invierno) === -60 && cmd.difConEspana('Europe/Paris', invierno) === 0);
+
+    // Planificar: decirle dónde estás
+    const fila = (plan, etq) => plan.find((x) => x.etiqueta === etq);
+    const meta = (plan) => plan.find((x) => x.meta)?.meta;
+    const hiloDe = (plan) => fila(plan, 'actualizar mensaje').cuerpo.hilo;
+    const turnoDe = (plan) => JSON.parse(hiloDe(plan).at(-1).texto);
+    const vacia = respuesta({ intencion: 'aclarar', pregunta: '¿?', items: [] });
+    const p1 = await planificar(vacia, { mensaje: 'Estoy en Portugal' });
+    afirmar('«Estoy en Portugal»: guarda el viaje (poner_viaje con la zona) y pregunta hasta cuándo, sin el modelo', fila(p1, 'viaje a Portugal')?.url.endsWith('/rest/v1/rpc/poner_viaje') && fila(p1, 'viaje a Portugal').cuerpo.p_zona === 'Europe/Lisbon' && fila(p1, 'viaje a Portugal').cuerpo.p_hasta === null && meta(p1).respuesta_usuario.includes('una hora menos que en España') && meta(p1).respuesta_usuario.endsWith('¿Hasta cuándo estarás allí?') && turnoDe(p1).motivo === 'viaje_hasta' && fila(p1, 'actualizar mensaje').cuerpo.pregunta_pendiente === true, JSON.stringify(meta(p1)));
+    const p2 = await planificar(vacia, { mensaje: 'Estoy en Francia' });
+    afirmar('«Estoy en Francia» (misma hora): lo apunta sin decir nada de la hora y no pregunta', fila(p2, 'viaje a Francia') && meta(p2).respuesta_usuario === 'Apuntado: estás en Francia.' && fila(p2, 'actualizar mensaje').cuerpo.pregunta_pendiente !== true, meta(p2).respuesta_usuario);
+    const p3 = await planificar(vacia, { mensaje: 'Me voy a Japón hasta el 15/12' });
+    afirmar('con fecha: la guarda y no pregunta', /^\d{4}-12-15$/.test(fila(p3, 'viaje a Japón')?.cuerpo.p_hasta ?? '') && /\d horas más que en España/.test(meta(p3).respuesta_usuario) && meta(p3).respuesta_usuario.includes('hasta el') && fila(p3, 'actualizar mensaje').cuerpo.pregunta_pendiente !== true, JSON.stringify(meta(p3)));
+    const p4 = await planificar(vacia, { mensaje: 'He vuelto', viaje: { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null } });
+    afirmar('«He vuelto»: cierra el viaje', fila(p4, 'volver de viaje')?.url.endsWith('/rest/v1/rpc/volver_de_viaje') && meta(p4).respuesta_usuario.startsWith('De vuelta'));
+    const p4b = await planificar(vacia, { mensaje: 'He vuelto' });
+    afirmar('«He vuelto» sin viaje: lo dice', meta(p4b).respuesta_usuario.startsWith('No tenía ningún viaje'));
+    const p4c = await planificar(vacia, { mensaje: 'Estoy en Madrid', viaje: { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null } });
+    afirmar('«Estoy en Madrid» con un viaje: es la vuelta', !!fila(p4c, 'volver de viaje'));
+    const p5 = await planificar(vacia, { mensaje: '¿dónde estoy?', viaje: { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: '2027-01-20' } });
+    const p5b = await planificar(vacia, { mensaje: '/viaje' });
+    afirmar('/viaje sin viaje: «Estás en hora de España.»', meta(p5b).respuesta_usuario === 'Estás en hora de España.', JSON.stringify(meta(p5b)));
+    afirmar('«¿dónde estoy?»: país, diferencia, hasta cuándo y la hora de allí', /^Estás en Portugal \(una hora menos que en España\), hasta el .+\. Allí son las \d\d:\d\d\.$/.test(meta(p5).respuesta_usuario), meta(p5).respuesta_usuario);
+    // Respuestas a «¿Hasta cuándo?»
+    const hiloHasta = hiloDe(p1).map(({ rol, texto }) => ({ rol, texto }));
+    const p6 = await planificar(vacia, { mensaje: 'Hasta el domingo', hiloPrevio: hiloHasta, pendienteId: 'q-1' });
+    afirmar('«Hasta el domingo»: viaje_hasta con la fecha, cierra la pregunta y dice cuándo vuelve a la hora de España', fila(p6, 'fecha de vuelta del viaje')?.url.endsWith('/rest/v1/rpc/viaje_hasta') && new Date(`${fila(p6, 'fecha de vuelta del viaje').cuerpo.p_hasta}T12:00:00Z`).getUTCDay() === 0 && !!fila(p6, 'cerrar pregunta anterior') && /vuelvo sola a la hora de España/.test(meta(p6).respuesta_usuario), JSON.stringify(meta(p6)));
+    const p7 = await planificar(vacia, { mensaje: 'No lo sé', hiloPrevio: hiloHasta, pendienteId: 'q-1' });
+    afirmar('«No lo sé»: el recordatorio de cada mañana, sin escribir nada más', meta(p7).respuesta_usuario.includes('Cada mañana') && meta(p7).respuesta_usuario.includes('Portugal') && !fila(p7, 'fecha de vuelta del viaje') && !!fila(p7, 'cerrar pregunta anterior'));
+    const p8 = await planificar(vacia, { mensaje: 'Estoy en Estados Unidos' });
+    afirmar('Estados Unidos: pregunta la ciudad', meta(p8).respuesta_usuario.includes('¿En qué ciudad estás?') && turnoDe(p8).motivo === 'viaje_ciudad' && !p8.some((x) => x.etiqueta?.startsWith('viaje a')));
+    const p9 = await planificar(vacia, { mensaje: 'Nueva York', hiloPrevio: hiloDe(p8).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-2' });
+    afirmar('«Nueva York»: guarda esa zona y pregunta hasta cuándo', fila(p9, 'viaje a Estados Unidos (Nueva York)')?.cuerpo.p_zona === 'America/New_York' && turnoDe(p9).motivo === 'viaje_hasta' && !!fila(p9, 'cerrar pregunta anterior'));
+
+    // La pregunta de la hora: una CITA de viaje sin fecha de vuelta; las alarmas de viaje van a la hora de allí sin preguntar
+    const PORTUGAL = { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null };
+    const alarma = respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Llamar a Ana', recordar_en: '2027-01-20T14:00:00+01:00', confianza: 0.95 }] });
+    const citaPT = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Comida con Ana', fecha_inicio: '2027-01-20T14:00:00+01:00', fecha_fin: '2027-01-20T15:00:00+01:00', confianza: 0.95 }] });
+    const a0 = await planificar(alarma, { mensaje: 'Ponme una alarma a las 14:00 para llamar a Ana', viaje: PORTUGAL });
+    const ga0 = fila(a0, 'guardar items')?.cuerpo[0];
+    afirmar('alarma a las 14:00 en Portugal → sin preguntar, a las 14:00 de Lisboa con «(Portugal)»', ga0 && Date.parse(ga0.recordar_en) === Date.parse('2027-01-20T14:00:00Z') && ga0.zona_alarma === 'Europe/Lisbon' && ga0.lugar_alarma === 'Portugal', JSON.stringify(a0.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+    const a0b = await planificar(citaPT, { mensaje: 'Comida con Ana el 20 de enero a las 14:00', viaje: { ...PORTUGAL, hasta: '2027-01-25' } });
+    const gc0 = fila(a0b, 'guardar items')?.cuerpo[0];
+    afirmar('una cita en Portugal con fecha de vuelta → sin preguntar, a la hora de allí con su zona', gc0 && Date.parse(gc0.fecha_inicio) === Date.parse('2027-01-20T14:00:00Z') && gc0.zona_alarma === 'Europe/Lisbon', JSON.stringify(gc0));
+    const q1 = await planificar(citaPT, { mensaje: 'Comida con Ana el 20 de enero a las 14:00', viaje: PORTUGAL });
+    afirmar('cita a las 14:00 en Portugal SIN fecha de vuelta: pregunta España o Portugal y no guarda nada todavía', !fila(q1, 'guardar items') && meta(q1).respuesta_usuario === '¿Las 14:00 de España o de Portugal?\n1. De España (allí serán las 13:00)\n2. De Portugal (en España serán las 15:00)' && turnoDe(q1).motivo === 'zona_hora' && typeof turnoDe(q1).respuesta === 'string' && turnoDe(q1).zona === 'Europe/Lisbon', JSON.stringify(meta(q1)));
+    const q2 = await planificar(citaPT, { mensaje: 'Comida con Ana el 20 de enero a las 14:00' });
+    afirmar('sin viaje: se guarda como siempre', !!fila(q2, 'guardar items'));
+    const q3 = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Llamar', recordar_en: '2027-01-20T14:00:00+01:00', confianza: 0.95 }] }), { mensaje: 'recuérdame llamar en 20 minutos', viaje: PORTUGAL });
+    afirmar('«en 20 minutos» (hora relativa): no pregunta', !!fila(q3, 'guardar items'));
+    const q4 = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Comprar pan', confianza: 0.95 }] }), { mensaje: 'apunta comprar pan a las 5', viaje: PORTUGAL });
+    afirmar('una tarea sin hora fija: no pregunta', !q4.some((x) => x.meta?.respuesta_usuario?.includes('¿Las')));
+    const q5 = await planificar(citaPT, { mensaje: 'Comida con Ana el 20 de enero a las 14:00', viaje: { pais: 'Francia', zona: 'Europe/Paris', hasta: null } });
+    afirmar('en Francia (misma hora): no pregunta', !!fila(q5, 'guardar items'));
+    // La respuesta: se vuelve a usar lo que dijo el modelo, sin llamarlo
+    const hiloZona = hiloDe(q1).map(({ rol, texto }) => ({ rol, texto }));
+    const nada = { error: 'no debería usarse' };
+    const r2 = await planificar(nada, { mensaje: '2', hiloPrevio: hiloZona, pendienteId: 'q-z', viaje: PORTUGAL });
+    const g2 = fila(r2, 'guardar items');
+    afirmar('«2» (de Portugal): guarda la cita a las 14:00 de Lisboa (15:00 de España) y cierra la pregunta', g2 && Date.parse(g2.cuerpo[0].fecha_inicio) === Date.parse('2027-01-20T14:00:00Z') && !!fila(r2, 'cerrar pregunta anterior'), JSON.stringify(g2?.cuerpo));
+    const r1 = await planificar(nada, { mensaje: '1', hiloPrevio: hiloZona, pendienteId: 'q-z', viaje: PORTUGAL });
+    afirmar('… con una línea que dice las dos horas (la confirmación sale en hora de España)', meta(r2).nota_zona === '🌍 Las 14:00 de Portugal (15:00 en España).', meta(r2).nota_zona);
+    {
+      const salida = (await correr(nodo('resultado.js'), { input: [{}], nodos: { Planificar: [{ meta: meta(r2) }], 'Escribir en Supabase': g2.cuerpo.map((x, i) => ({ id: `r-${i}`, estado: 'pendiente', ...x })) } }))[0];
+      afirmar('Resultado: la confirmación de la cita termina con la línea de las dos horas', salida.mensajes.at(-1).endsWith('\n🌍 Las 14:00 de Portugal (15:00 en España).'), JSON.stringify(salida.mensajes));
+    }
+    afirmar('«1» (de España): guarda las 14:00 de España tal cual', Date.parse(fila(r1, 'guardar items')?.cuerpo[0].fecha_inicio) === Date.parse('2027-01-20T13:00:00Z'));
+    afirmar('«1»: la línea dice las 14:00 de España y las 13:00 de allí', meta(r1).nota_zona === '🌍 Las 14:00 de España (13:00 en Portugal).', meta(r1).nota_zona);
+    const rP = await planificar(nada, { mensaje: 'Portugal', hiloPrevio: hiloZona, pendienteId: 'q-z', viaje: PORTUGAL });
+    const rE = await planificar(nada, { mensaje: 'la de España', hiloPrevio: hiloZona, pendienteId: 'q-z', viaje: PORTUGAL });
+    afirmar('«Portugal» = la de allí; «la de España» = la de España', Date.parse(fila(rP, 'guardar items')?.cuerpo[0].fecha_inicio) === Date.parse('2027-01-20T14:00:00Z') && Date.parse(fila(rE, 'guardar items')?.cuerpo[0].fecha_inicio) === Date.parse('2027-01-20T13:00:00Z'));
+    // Una cita en Tokio: las 10:00 de allí son las 02:00 de España
+    const TOKIO = { pais: 'Japón', zona: 'Asia/Tokyo', hasta: '2027-01-25' };
+    const cita = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Reunión', fecha_inicio: '2027-01-20T10:00:00+01:00', fecha_fin: '2027-01-20T11:00:00+01:00', confianza: 0.95 }] });
+    const t1 = await planificar(cita, { mensaje: 'Reunión el 20 de enero a las 10', viaje: TOKIO });
+    const gt = fila(t1, 'guardar items')?.cuerpo[0];
+    afirmar('cita a las 10 en Japón: sin preguntar, a las 10:00 de Tokio (01:00 y 02:00 UTC)', gt && Date.parse(gt.fecha_inicio) === Date.parse('2027-01-20T01:00:00Z') && Date.parse(gt.fecha_fin) === Date.parse('2027-01-20T02:00:00Z') && gt.zona_alarma === 'Asia/Tokyo' && gt.lugar_alarma === 'Japón', JSON.stringify(t1.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+    // Corregir con hora: «muévela a las 16»
+    const cor = respuesta({ intencion: 'corregir', correccion: { item_ids: ['i1'], cambios: { fecha_inicio: '2027-01-21T16:00:00+01:00' } } });
+    const c1 = await planificar(cor, { mensaje: 'muévela a las 16', viaje: PORTUGAL, refs: REFS, pendientes: [] });
+    afirmar('cambiar una cita a una hora fija (viaje sin fecha de vuelta) también pregunta y guarda la referencia de entonces', meta(c1).respuesta_usuario.startsWith('¿Las 16:00 de España o de Portugal?') && turnoDe(c1).refs.i1 === 'a1-uuid', JSON.stringify(turnoDe(c1)));
+    const c2 = await planificar(nada, { mensaje: '2', hiloPrevio: hiloDe(c1).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-c', viaje: PORTUGAL, refs: { i1: 'otro-uuid' } });
+    const camb = c2.find((x) => x.metodo === 'PATCH' && x.url.includes('/items?') && x.url.includes('a1-uuid'));
+    afirmar('… y al contestar usa la referencia de entonces (aunque ahora i1 sea otro) con la hora de Lisboa', camb && Date.parse(camb.cuerpo.fecha_inicio) === Date.parse('2027-01-21T16:00:00Z'), JSON.stringify(c2.map((x) => [x.etiqueta, x.url, x.cuerpo])));
+    // Si después hubo otra pregunta (un día ocupado…) y su «sí» vuelve al modelo, la elección se mantiene y no se pregunta otra vez
+    const hiloLargo = [...hiloZona, { rol: 'user', texto: '2' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', motivo: 'confirmar_agenda', dias: ['2027-01-20'], pregunta: '¿La apunto igualmente?', items: [] }) }];
+    const s1 = await planificar(citaPT, { mensaje: 'sí', hiloPrevio: hiloLargo, pendienteId: 'q-s', viaje: PORTUGAL });
+    afirmar('«sí» a otra pregunta después de elegir «2»: guarda con la hora de Lisboa sin volver a preguntar', Date.parse(fila(s1, 'guardar items')?.cuerpo[0].fecha_inicio) === Date.parse('2027-01-20T14:00:00Z'), JSON.stringify(s1.map((x) => x.etiqueta)));
+    // Enrutado: «2» contesta a la pregunta de la hora; una orden nueva no
+    const abierta = [{ id: 'q-z', pregunta: '¿Las 14:00…?', hilo: hiloZona }];
+    afirmar('«2», «Portugal» y «de España» contestan a la pregunta de la hora; «apunta pan» no', ['2', 'Portugal', 'de España', 'la de allí'].every((m) => cmd.elegirPregunta(m, abierta)?.id === 'q-z') && cmd.elegirPregunta('apunta pan', abierta) === null);
+    afirmar('«mañana dentista a las 10» no contesta a «¿Hasta cuándo?»', cmd.elegirPregunta('mañana dentista a las 10', [{ id: 'q-1', pregunta: '¿Hasta cuándo?', hilo: hiloHasta }]) === null);
+
+    // Construir petición: el viaje llega a Planificar y las órdenes del viaje van sin el modelo
+    const codigoCPv = codigoConstruir();
+    const cpViaje = (mensaje, { viaje = [{}], pregunta = [{}] } = {}) =>
+      correr(codigoCPv, { nodos: { Configuración: [{ config: CONFIG }], Entrada: [{ mensaje, fecha_actual: 'miércoles 20 de enero 2027, 12:00 (+01:00)', wa_message_id: 'wa-v' }], 'Leer memoria': [{ termino: 'nombre de la secretaria', significado: 'Jarvis' }], 'Leer items pendientes': [{}], 'Leer pregunta pendiente': pregunta, 'Leer archivos': [{}], 'Leer proyectos': [{}], 'Leer respuesta citada': [{}], 'Leer viaje': viaje } }).then((x) => x[0]);
+    const cv1 = await cpViaje('Estoy en Portugal');
+    afirmar('Construir: «Estoy en Portugal» va sin el modelo', cv1.saltar_modelo === true && cv1.viaje === null);
+    const cv2 = await cpViaje('Ponme una alarma a las 14', { viaje: [{ id: 'v', pais: 'Portugal', zona: 'Europe/Lisbon', hasta: '2027-01-25', cerrado_at: null }] });
+    afirmar('Construir: el viaje activo llega a Planificar; una alarma necesita el modelo', JSON.stringify(cv2.viaje) === JSON.stringify({ pais: 'Portugal', zona: 'Europe/Lisbon', hasta: '2027-01-25' }) && cv2.saltar_modelo === false);
+    const cv3 = await cpViaje('2', { pregunta: [{ id: 'q-z', pregunta: '¿Las 14:00…?', hilo: hiloZona }] });
+    afirmar('Construir: «2» a la pregunta de la hora va sin el modelo', cv3.saltar_modelo === true && cv3.pendiente_id === 'q-z');
+    {
+      const hace10 = new Date(Date.now() - 10 * 60000).toISOString();
+      const cv5 = await correr(codigoCPv, { nodos: { Configuración: [{ config: CONFIG }], Entrada: [{ mensaje: 'dame todo', fecha_actual: 'x', wa_message_id: 'wa-v', recibido_at: new Date().toISOString() }], 'Leer memoria': [{ termino: 'nombre de la secretaria', significado: 'Jarvis' }], 'Leer items pendientes': [{}], 'Leer pregunta pendiente': [{ id: 'q-1', pregunta: '¿Hasta cuándo?', hilo: [hiloHasta[0], { ...hiloHasta[1], en: hace10 }] }], 'Leer archivos': [{}], 'Leer proyectos': [{}], 'Leer respuesta citada': [{}], 'Leer viaje': [{}] } }).then((x) => x[0]);
+      afirmar('«¿Hasta cuándo?» sin contestar: se cierra en silencio (no se pierde nada)', cv5.preguntas_ignoradas.length === 1 && cv5.preguntas_ignoradas[0].silenciosa === true, JSON.stringify(cv5.preguntas_ignoradas));
+    }
+    // Tramo 2: los textos con horas, en la de allí
+    const NY = { pais: 'Estados Unidos (Nueva York)', zona: 'America/New_York', hasta: null };
+    const t2a = await planificar(respuesta({ intencion: 'consultar', consulta: { tipo: null, estado: 'pendiente' } }), { mensaje: 'qué tengo pendiente', viaje: NY });
+    afirmar('tramo 2: Planificar dice a Resultado la zona y el lugar del viaje', meta(t2a).zona_texto === 'America/New_York' && meta(t2a).lugar_texto === 'Nueva York', JSON.stringify(meta(t2a)));
+    const t2b = await planificar(respuesta({ intencion: 'consultar', consulta: { tipo: null, estado: 'pendiente' } }), { mensaje: 'qué tengo pendiente', viaje: { pais: 'Francia', zona: 'Europe/Paris', hasta: null } });
+    afirmar('tramo 2: en un sitio con la misma hora no se cambia nada', meta(t2b).zona_texto === undefined);
+    const listar = (zona) => correr(nodo('resultado.js'), { input: [{ tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-12T08:00:00+00:00', fecha_fin: '2026-10-12T09:00:00+00:00' }, { tipo: 'tarea', titulo: 'Entregar informe', fecha_limite: '2026-10-13T21:59:59+00:00' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: '2026-10-10T08:00:00.000Z', consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 }, ...zona } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((r) => r[0].mensajes.join('\n\n'));
+    const enNY = await listar({ zona_texto: 'America/New_York', lugar_texto: 'Nueva York' });
+    const enTokio = await listar({ zona_texto: 'Asia/Tokyo', lugar_texto: 'Japón' });
+    const enEspana = await listar({});
+    afirmar('una cita puesta en España sale a las 10:00 sin paréntesis aunque estés en Nueva York, y sin línea final', enNY.includes('Dentista, lun 12 oct, 10:00') && !enNY.includes('🕒') && enEspana.includes('10:00'), enNY);
+    {
+      const conZona = await correr(nodo('resultado.js'), { input: [{ tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-12T08:00:00+00:00', fecha_fin: '2026-10-12T09:00:00+00:00', zona_alarma: 'America/New_York', lugar_alarma: 'Nueva York' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: '2026-10-10T08:00:00.000Z', consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 } } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((r) => r[0].mensajes.join('\n\n'));
+      afirmar('una cita puesta en Nueva York sale «04:00 (Nueva York)»', conZona.includes('Dentista, lun 12 oct, 04:00 (Nueva York)'), conZona);
+    }
+    afirmar('tramo 2: la fecha límite (23:59 de Madrid) sigue siendo el mar 13 también en Japón y en Nueva York', enTokio.includes('Entregar informe (mar 13 oct)') && enNY.includes('Entregar informe (mar 13 oct)'), enTokio);
+    // La confirmación de una alarma de viaje sin pregunta de hora («en 20 minutos»): la hora de allí
+    const pAl = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Llamar', recordar_en: '2026-10-10T14:20:00+02:00', confianza: 0.95 }] }), { mensaje: 'recuérdame llamar en 20 minutos', viaje: { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null } });
+    const gAl = pAl.find((x) => x.etiqueta === 'guardar items');
+    const conf = await correr(nodo('resultado.js'), { input: [{}], nodos: { Planificar: [{ meta: meta(pAl) }], 'Escribir en Supabase': gAl.cuerpo.map((x, k) => ({ id: `r-${k}`, estado: 'pendiente', ...x })) } }).then((r) => r[0].mensajes);
+    afirmar('una alarma «en 20 minutos» puesta en Portugal se guarda con su zona y se escribe «13:20 (Portugal)», sin línea de citas', gAl.cuerpo[0].zona_alarma === 'Europe/Lisbon' && gAl.cuerpo[0].lugar_alarma === 'Portugal' && Date.parse(gAl.cuerpo[0].recordar_en) === Date.parse('2026-10-10T12:20:00Z') && conf.join('\n').includes('a las 13:20 (Portugal).') && !conf.join('\n').includes('🕒'), JSON.stringify(conf));
+    // Una pregunta del código con horas («Esa hora ya ha pasado»)
+    const pasada = await planificar(respuesta({ intencion: 'corregir', correccion: { item_ids: ['i1'], cambios: { recordar_en: '2026-10-01T10:00:00+02:00' } } }), { mensaje: 'cámbiala al 1 de octubre', viaje: { pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null }, refs: REFS });
+    afirmar('«Esa hora ya ha pasado» de una alarma sin zona: en hora de España, sin paréntesis', JSON.stringify(pasada).includes('(jue 1 oct, 10:00)'), JSON.stringify(pasada.map((x) => x.meta?.respuesta_usuario)));
+    // --- cancelar o cambiar viajes, frases sin forma, más sitios y el aviso de lo que va en hora de España ---
+    {
+      const ivC = (m) => cmd.interpretarViaje(m, new Date('2026-10-10T08:00:00Z'));
+      afirmar('«cancela el viaje a Japón», «ya no me voy a Japón», «al final no voy a México» cancelan; «el viaje a Japón es del 21 al 28» y «… hasta el 28» lo cambian', ivC('cancela el viaje a Japón')?.tipo === 'cancelar_viaje' && ivC('ya no me voy a Japón')?.zona === 'Asia/Tokyo' && ivC('al final no voy a México')?.tipo === 'cancelar_viaje' && JSON.stringify(ivC('el viaje a Japón es del 21 al 28')) === JSON.stringify({ tipo: 'cambiar_viaje', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-21', hasta: '2026-10-28' }) && ivC('el viaje a Japón es hasta el 28')?.hasta === '2026-10-28');
+      afirmar('«igual el finde me escapo a Oporto» no va al modelo (se dice cómo decirlo); «recuérdame reservar el vuelo a Lisboa» sí', ivC('igual el finde me escapo a Oporto')?.tipo === 'ayuda_viaje' && ivC('recuérdame reservar el vuelo a Lisboa') === null && ivC('apunta que mi madre se va a Lisboa') === null);
+      afirmar('más sitios («Sintra», «Las Palmas», «Kioto», «Cabo Verde», «Granada» = España) y todas las zonas existen', cmd.buscarLugar('sintra')?.zona === 'Europe/Lisbon' && cmd.buscarLugar('las palmas')?.zona === 'Atlantic/Canary' && cmd.buscarLugar('kioto')?.zona === 'Asia/Tokyo' && cmd.buscarLugar('cabo verde')?.zona === 'Atlantic/Cape_Verde' && cmd.buscarLugar('granada')?.zona === 'Europe/Madrid' && cmd.buscarLugar('guadalajara') === null);
+      {
+        const fuente = nodo('planificar.js');
+        const zonas = [...new Set([...fuente.matchAll(/'((?:Europe|America|Asia|Africa|Atlantic|Pacific|Indian|Australia)\/[A-Za-z_/]+)'/g)].map((x) => x[1]))];
+        const malas = zonas.filter((z) => { try { new Intl.DateTimeFormat('es', { timeZone: z }); return false; } catch (e) { return true; } });
+        afirmar(`las ${zonas.length} zonas de la tabla existen`, zonas.length > 80 && malas.length === 0, malas.join(', '));
+      }
+      const TRJ = [{ id: '11111111-1111-4111-8111-111111111111', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-20', hasta: '2026-10-30', actual: false }];
+      const c1 = await planificar(vacia, { mensaje: 'cancela el viaje a Japón', tramos: TRJ });
+      const pc1 = fila(c1, 'quitar el viaje a Japón');
+      afirmar('cancelar un viaje planeado lo cierra (PATCH por su id) y lo dice', pc1?.metodo === 'PATCH' && pc1.url.includes('/viajes?id=eq.11111111-1111-4111-8111-111111111111&cerrado_at=is.null') && typeof pc1.cuerpo.cerrado_at === 'string' && meta(c1).respuesta_usuario === 'Hecho: quitado el viaje a Japón (del martes 20 de octubre al viernes 30 de octubre).', JSON.stringify(meta(c1)));
+      const c2 = await planificar(vacia, { mensaje: 'cancela el viaje a México', tramos: TRJ });
+      afirmar('… uno que no existe: lo dice', meta(c2).respuesta_usuario.startsWith('No tengo ningún viaje a México apuntado.'));
+      const c3 = await planificar(vacia, { mensaje: 'el viaje a Japón es del 21 al 28', tramos: TRJ, pendientes: [{ id: 'p', tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-22T08:00:00.000Z' }] });
+      const pc3 = fila(c3, 'cambiar el viaje a Japón');
+      afirmar('cambiar las fechas: PATCH con desde y hasta, y lo que coincide', pc3?.cuerpo.desde === '2026-10-21' && pc3.cuerpo.hasta === '2026-10-28' && meta(c3).respuesta_usuario.startsWith('Hecho: el viaje a Japón queda del miércoles 21 de octubre al miércoles 28 de octubre.\nEsos días tienes:') && meta(c3).respuesta_usuario.includes('Dentista'), JSON.stringify(meta(c3)));
+      const c4 = await planificar(vacia, { mensaje: 'el viaje a Japón es del 28 de octubre al 21 de octubre', tramos: TRJ });
+      afirmar('… si acabaría antes de empezar, no lo cambia', !fila(c4, 'cambiar el viaje a Japón') && meta(c4).respuesta_usuario.startsWith('Así el viaje acabaría antes de empezar'));
+      const c5 = await planificar(vacia, { mensaje: 'cancela el viaje a Portugal', viaje: PORTUGAL, tramos: [{ ...PORTUGAL, id: 'x', desde: null, actual: true }] });
+      afirmar('… cancelar el viaje en el que estás es volver', !!fila(c5, 'volver de viaje'));
+      const c6 = await planificar(vacia, { mensaje: 'igual el finde me escapo a Oporto' });
+      afirmar('una frase de viaje sin forma conocida contesta cómo decirlo, sin el modelo', meta(c6).respuesta_usuario.startsWith('¿Te vas de viaje a Portugal? Dímelo con las fechas'));
+      // Estando fuera, el listado aclara lo que va en hora de España
+      const lst = await correr(nodo('resultado.js'), { input: [{ tipo: 'tarea', titulo: 'Avión', recordar_en: '2026-10-13T18:00:00+00:00', zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' }, { tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-13T15:00:00+00:00' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: '2026-10-10T08:00:00.000Z', consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 }, zona_texto: 'Europe/Lisbon', lugar_texto: 'Portugal' } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((r) => r[0].mensajes.join('\n\n'));
+      afirmar('estando fuera, si hay alguna sin país, «(Lo que no lleva país va en hora de España.)» al final', lst.endsWith('\n(Lo que no lleva país va en hora de España.)') && lst.includes('17:00') && lst.includes('19:00 (Portugal)'), lst);
+      const lstE = await correr(nodo('resultado.js'), { input: [{ tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-13T15:00:00+00:00' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: '2026-10-10T08:00:00.000Z', consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 } } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((r) => r[0].mensajes.join('\n\n'));
+      afirmar('… en España, sin esa línea', !lstE.includes('Lo que no lleva país'), lstE);
+      const cvId = await cpViaje('hola', { viaje: [{ id: 'abc', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2099-01-02', hasta: null, cerrado_at: null }] });
+      afirmar('Construir: cada tramo lleva su id (para cancelarlo o cambiarlo)', cvId.tramos[0].id === 'abc');
+    }
+    // --- fallos reales del 2026-11-06 (doble conversión, el viaje como cita larga, mantener o quitar lo que coincide) ---
+    {
+      // Tras «de Portugal» y la pregunta del choque, «a las 22:30» vuelve al modelo: si él ya la pasa a la hora de España (23:30), no se mueve otra vez
+      const PLAN_PT = { zona: 'Europe/Lisbon', lugar: 'Portugal', alarmas: 'local', citas: 'local', dias: 0, eleccion: 'local' };
+      const hiloSolape = [{ rol: 'user', texto: 'cita mañana a las 21' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', motivo: 'solape', dias: [], zona_plan: PLAN_PT, pregunta: 'No puedo agendarlo…', items: [] }) }];
+      const cita2230 = (iso) => respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Médico', fecha_inicio: iso, fecha_fin: new Date(Date.parse(iso) + 3600000).toISOString(), confianza: 0.95 }] });
+      const d1 = await planificar(cita2230('2027-01-20T23:30:00+01:00'), { mensaje: 'A las 22:30', hiloPrevio: hiloSolape, pendienteId: 'q-s' });
+      const gd1 = fila(d1, 'guardar items')?.cuerpo[0];
+      afirmar('si el modelo ya convirtió «a las 22:30» (Portugal) a 23:30 de España, se guarda a las 22:30 de Portugal, no a las 23:30', gd1 && Date.parse(gd1.fecha_inicio) === Date.parse('2027-01-20T22:30:00Z') && Date.parse(gd1.fecha_fin) === Date.parse('2027-01-20T23:30:00Z') && gd1.zona_alarma === 'Europe/Lisbon', JSON.stringify(gd1));
+      const d2 = await planificar(cita2230('2027-01-20T22:30:00+01:00'), { mensaje: 'A las 22:30', hiloPrevio: hiloSolape, pendienteId: 'q-s' });
+      const gd2 = fila(d2, 'guardar items')?.cuerpo[0];
+      afirmar('… y si el modelo la dio tal cual (22:30), también: a las 22:30 de Portugal', gd2 && Date.parse(gd2.fecha_inicio) === Date.parse('2027-01-20T22:30:00Z'), JSON.stringify(gd2));
+      afirmar('… horaDicha entiende «a las 22:30», «a las 9 y media», «a las 9 de la noche»', JSON.stringify(['A las 22:30', 'a las 9 y media', 'a las 9 de la noche', 'sin hora'].map(cmd.horaDicha)) === JSON.stringify(['22:30', '09:30', '21:00', null]), JSON.stringify(['A las 22:30', 'a las 9 y media', 'a las 9 de la noche', 'sin hora'].map(cmd.horaDicha)));
+      // Un viaje guardado como una cita de varios días ya no bloquea: avisa y pregunta
+      const AG = [{ id: 'e1', tipo: 'evento', titulo: 'Viaje a Francia', fecha_inicio: '2026-11-08T08:00:00.000Z', fecha_fin: '2026-11-10T08:00:00.000Z' }];
+      const comprar = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Ir a comprar', fecha_inicio: '2026-11-09T18:00:00+01:00', fecha_fin: '2026-11-09T19:00:00+01:00', confianza: 0.95 }] });
+      const l1 = await planificar(comprar, { mensaje: 'Ponme una cita para el día 9 a las 18:00 de ir a comprar', agenda: AG, refs: { e1: 'e1' } });
+      afirmar('una cita dentro de una cita larga («Viaje a Francia» de dos días) no da «No puedo agendarlo»: pregunta si la apunta igualmente', !fila(l1, 'guardar items') && meta(l1).respuesta_usuario === '«Ir a comprar» (lun 9 nov, 18:00) cae dentro de «Viaje a Francia» (del dom 8 nov al mar 10 nov).\n¿La apunto igualmente?' && !JSON.stringify(l1).includes('No puedo agendarlo'), JSON.stringify(meta(l1)));
+      const hL = hiloDe(l1).map(({ rol, texto }) => ({ rol, texto }));
+      const l2 = await planificar(comprar, { mensaje: 'sí', hiloPrevio: hL, pendienteId: 'q-l', agenda: AG, refs: { e1: 'e1' } });
+      afirmar('… y con el «sí» se apunta (no vuelve a preguntar)', !!fila(l2, 'guardar items'));
+      const l3 = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Otra', fecha_inicio: '2026-11-09T18:30:00+01:00', fecha_fin: '2026-11-09T19:30:00+01:00', confianza: 0.95 }] }), { mensaje: 'otra a las 18:30', agenda: [{ id: 'e2', tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-11-09T17:00:00.000Z', fecha_fin: '2026-11-09T18:00:00.000Z' }], refs: { e2: 'e2' } });
+      afirmar('… una cita normal sigue bloqueando el solape', meta(l3).respuesta_usuario.startsWith('No puedo agendarlo'));
+      afirmar('«Tengo un viaje a Francia del 8 al 10» y «me voy de viaje a Japón el 20» son viajes (antes acababan en una cita de varios días o sin entender)', JSON.stringify(cmd.interpretarViaje('Tengo un viaje a Francia del 8 al 10', new Date('2026-11-06T12:00:00Z'))) === JSON.stringify({ tipo: 'plan', pais: 'Francia', zona: 'Europe/Paris', desde: '2026-11-08', hasta: '2026-11-10' }) && cmd.interpretarViaje('me voy de viaje a Japón el 20', new Date('2026-11-06T12:00:00Z'))?.desde === '2026-11-20');
+    // Lo que coincide con un viaje: numerado y se puede mantener o quitar
+      const PEN = [{ id: 'p1', tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-22T08:00:00.000Z' }, { id: 'p2', tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-23T15:00:00.000Z' }];
+      const k1 = await planificar(vacia, { mensaje: 'El 20 me voy a Japón hasta el 30', pendientes: PEN, refs: { p1: 'p1', p2: 'p2' } });
+      afirmar('al apuntar el viaje, lo que coincide sale numerado y queda abierto «¿Las mantienes?»', turnoDe(k1).motivo === 'coincidencias_viaje' && JSON.stringify(turnoDe(k1).ids) === JSON.stringify(['p1', 'p2']) && meta(k1).respuesta_usuario.endsWith('¿Las mantienes? Dime «mantenlas», «quítalas» o «quita la 2».'), JSON.stringify(turnoDe(k1)));
+      const hK = hiloDe(k1).map(({ rol, texto }) => ({ rol, texto }));
+      const k2 = await planificar({ error: 'no' }, { mensaje: 'quita la 2', hiloPrevio: hK, pendienteId: 'q-k', pendientes: PEN, refs: { p1: 'p1', p2: 'p2' } });
+      const ck2 = k2.find((x) => x.metodo === 'PATCH' && x.url.includes('/items?'));
+      afirmar('… «quita la 2» quita solo «Llamar a mamá» (por el camino de quitar, con «deshaz»)', ck2 && ck2.url.includes('p2') && !ck2.url.includes('p1'), JSON.stringify(k2.map((x) => [x.etiqueta, x.url])));
+      const k3 = await planificar({ error: 'no' }, { mensaje: 'quítalas', hiloPrevio: hK, pendienteId: 'q-k', pendientes: PEN, refs: { p1: 'p1', p2: 'p2' } });
+      const ck3 = k3.find((x) => x.metodo === 'PATCH' && x.url.includes('/items?'));
+      afirmar('… «quítalas» quita las dos', ck3 && ck3.url.includes('p1') && ck3.url.includes('p2'), JSON.stringify(k3.map((x) => [x.etiqueta, x.url])));
+      const k4 = await planificar({ error: 'no' }, { mensaje: 'mantenlas', hiloPrevio: hK, pendienteId: 'q-k', pendientes: PEN });
+      afirmar('… «mantenlas»: no toca nada', meta(k4).respuesta_usuario === 'Vale, las mantengo.' && !k4.some((x) => x.metodo === 'PATCH' && x.url.includes('/items?')));
+      afirmar('«quita la 2», «quítalas» y «mantenlas» contestan a esa pregunta; «dame todo» no', ['quita la 2', 'quítalas', 'mantenlas', 'quita la 1 y 2'].every((m) => cmd.elegirPregunta(m, [{ id: 'q-k', pregunta: '¿Las mantienes?', hilo: hK }])?.id === 'q-k') && cmd.elegirPregunta('dame todo', [{ id: 'q-k', pregunta: '¿Las mantienes?', hilo: hK }]) === null);
+    }
+    // --- «tengo un viaje del 8 al 10 a francia» ---
+    {
+      const ivF = (m) => cmd.interpretarViaje(m, new Date('2026-11-06T19:00:00Z'));
+      afirmar('las fechas delante del sitio («tengo un viaje del 8 al 10 a francia», «me voy del 8 al 10 a Francia», «del 8 al 10 me voy a Francia») son un viaje', ['tengo un viaje del 8 al 10 a francia', 'me voy del 8 al 10 a Francia', 'del 8 al 10 me voy a Francia'].every((m) => JSON.stringify(ivF(m)) === JSON.stringify({ tipo: 'plan', pais: 'Francia', zona: 'Europe/Paris', desde: '2026-11-08', hasta: '2026-11-10' })));
+      // Si aun así el modelo lo apunta como cita de varios días, se guarda como viaje
+      const viajeCita = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje a Francia', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-10T09:00:00+01:00', confianza: 0.95 }] });
+      const v1 = await planificar(viajeCita, { mensaje: 'a las 9 de la mañana ambos días', hiloPrevio: [{ rol: 'user', texto: 'tengo un viaje a Francia' }, { rol: 'model', texto: JSON.stringify({ intencion: 'aclarar', pregunta: '¿A qué hora sales el 8 y a qué hora vuelves el 10?', items: [] }) }], agenda: [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z', fecha_fin: '2026-11-09T09:00:00.000Z' }], refs: { pelu: 'pelu' }, pendientes: [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z' }] });
+      afirmar('una cita «Viaje a Francia» de dos días que devuelve el modelo se guarda como VIAJE (planear_viaje), no como cita, y dice lo que coincide', !fila(v1, 'guardar items') && fila(v1, 'viaje a Francia desde el 2026-11-08')?.cuerpo.p_hasta === '2026-11-10' && meta(v1).respuesta_usuario.includes('1. 📅 Peluquería, lun 9 nov, 09:00') && !JSON.stringify(v1).includes('No puedo agendarlo'), JSON.stringify(v1.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+      // Una cita larga nueva que no es un viaje («Congreso» de dos días) sobre una normal: pregunta, no bloquea
+      const congreso = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Congreso', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-10T09:00:00+01:00', confianza: 0.95 }] });
+      const v2 = await planificar(congreso, { mensaje: 'congreso del 8 al 10', agenda: [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z', fecha_fin: '2026-11-09T09:00:00.000Z' }], refs: { pelu: 'pelu' } });
+      afirmar('una cita larga nueva sobre una normal no da «No puedo agendarlo»: «… coincide con «Peluquería» … ¿La apunto igualmente?»', !fila(v2, 'guardar items') && meta(v2).respuesta_usuario === '«Congreso» (del dom 8 nov al mar 10 nov) coincide con «Peluquería» (lun 9 nov, 09:00).\n¿La apunto igualmente?', JSON.stringify(meta(v2)));
+      const v3 = await planificar(congreso, { mensaje: 'sí', hiloPrevio: hiloDe(v2).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-c', agenda: [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z', fecha_fin: '2026-11-09T09:00:00.000Z' }], refs: { pelu: 'pelu' } });
+      afirmar('… y con el «sí» se apunta', !!fila(v3, 'guardar items'));
+    }
+    // --- un viaje sin decir adónde ---
+    {
+      const ivN = (m) => cmd.interpretarViaje(m, new Date('2026-11-06T19:00:00Z'));
+      afirmar('«tengo un viaje del 8 al 10», «me voy de viaje del 8 al 10», «del 8 al 10 me voy de viaje» son un viaje sin destino', ['tengo un viaje del 8 al 10', 'me voy de viaje del 8 al 10', 'del 8 al 10 me voy de viaje', 'tengo un viaje el 8 hasta el 10'].every((m) => JSON.stringify(ivN(m)) === JSON.stringify({ tipo: 'viaje_sin_destino', desde: '2026-11-08', hasta: '2026-11-10' })) && ivN('tengo un viaje del 8 al 10 a francia')?.tipo === 'plan');
+      afirmar('el rango se resuelve con los dos extremos: «del 20 al 30 de diciembre» es del 20 de diciembre; «del 28 al 3 de enero», del 28 de diciembre; «del 28 al 3», cruzando de mes', ivN('tengo un viaje del 20 al 30 de diciembre')?.desde === '2026-12-20' && ivN('tengo un viaje del 28 al 3 de enero')?.desde === '2026-12-28' && ivN('tengo un viaje del 28 al 3 de enero')?.hasta === '2027-01-03' && ivN('me voy a Japón del 28 al 3')?.hasta === '2026-12-03' && ivN('me voy a Japón del 20 al 30 de diciembre')?.desde === '2026-12-20', JSON.stringify(['tengo un viaje del 20 al 30 de diciembre', 'tengo un viaje del 28 al 3 de enero', 'me voy a Japón del 28 al 3'].map(ivN)));
+      const PELU = [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z' }];
+      const n1 = await planificar(vacia, { mensaje: 'tengo un viaje del 8 al 10', pendientes: PELU });
+      afirmar('lo apunta ya (planear_viaje, hora de España), enseña lo que coincide y pregunta a dónde', fila(n1, 'viaje sin destino desde el 2026-11-08')?.cuerpo.p_zona === 'Europe/Madrid' && fila(n1, 'viaje sin destino desde el 2026-11-08').cuerpo.p_hasta === '2026-11-10' && meta(n1).respuesta_usuario === 'Apuntado: viaje del domingo 8 de noviembre al martes 10 de noviembre.\nEsos días tienes:\n1. 📅 Peluquería, lun 9 nov, 09:00\n¿A dónde vas? Si no quieres decirlo, no hace falta: lo dejo así.' && turnoDe(n1).motivo === 'viaje_sin_destino', meta(n1).respuesta_usuario);
+      const hN = hiloDe(n1).map(({ rol, texto }) => ({ rol, texto }));
+      const n2 = await planificar(vacia, { mensaje: 'a Francia', hiloPrevio: hN, pendienteId: 'q-n', pendientes: PELU });
+      afirmar('… «a Francia»: se guarda con ese destino (sustituye al de sin destino) y pregunta si mantiene lo que coincide', fila(n2, 'viaje a Francia desde el 2026-11-08')?.cuerpo.p_hasta === '2026-11-10' && turnoDe(n2).motivo === 'coincidencias_viaje', JSON.stringify(meta(n2)));
+      const n3 = await planificar(vacia, { mensaje: 'prefiero no decirlo', hiloPrevio: hN, pendienteId: 'q-n' });
+      afirmar('… «prefiero no decirlo»: se queda como viaje', meta(n3).respuesta_usuario === 'Vale, lo dejo como viaje, sin destino.' && !n3.some((x) => x.url?.includes('/rpc/planear_viaje')));
+      const hace10 = new Date(Date.now() - 10 * 60000).toISOString();
+      const cvN = await correr(codigoConstruir(), { nodos: { Configuración: [{ config: CONFIG }], Entrada: [{ mensaje: 'dame todo', fecha_actual: 'x', wa_message_id: 'wa-n', recibido_at: new Date().toISOString() }], 'Leer memoria': [{ termino: 'nombre de la secretaria', significado: 'Jarvis' }], 'Leer items pendientes': [{}], 'Leer pregunta pendiente': [{ id: 'q-n', pregunta: '¿A dónde vas?', hilo: [hN[0], { ...hN[1], en: hace10 }] }], 'Leer archivos': [{}], 'Leer proyectos': [{}], 'Leer respuesta citada': [{}], 'Leer viaje': [{}] } }).then((x) => x[0]);
+      afirmar('… y si no contesta (escribe otra cosa), se cierra en silencio: queda como viaje', cvN.preguntas_ignoradas.length === 1 && cvN.preguntas_ignoradas[0].silenciosa === true, JSON.stringify(cvN.preguntas_ignoradas));
+      const lsN = await planificar(vacia, { mensaje: 'dame mis viajes', tramos: [{ id: 'z', pais: 'Viaje sin destino', zona: 'Europe/Madrid', desde: '2026-11-08', hasta: '2026-11-10', actual: false }] });
+      afirmar('… en «dame mis viajes» sale como «Viaje (sin destino)»; «cancela el viaje» lo quita', meta(lsN).respuesta_usuario.includes('• Viaje (sin destino): del domingo 8 de noviembre al martes 10 de noviembre') && !!fila(await planificar(vacia, { mensaje: 'cancela el viaje', tramos: [{ id: 'z', pais: 'Viaje sin destino', zona: 'Europe/Madrid', desde: '2026-11-08', hasta: '2026-11-10', actual: false }] }), 'quitar el viaje a Viaje sin destino'), meta(lsN).respuesta_usuario);
+      const vN = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-10T09:00:00+01:00', confianza: 0.95 }] }), { mensaje: 'a las 9 ambos días' });
+      afirmar('… si el modelo devuelve una cita «Viaje» de varios días sin sitio, también es un viaje sin destino', !fila(vN, 'guardar items') && fila(vN, 'viaje sin destino desde el 2026-11-08') && turnoDe(vN).motivo === 'viaje_sin_destino');
+    }
+    // --- un viaje nunca se apunta como cita ---
+    {
+      const ivN = (m) => cmd.interpretarViaje(m, new Date('2026-11-06T19:47:00Z'));
+      const real = ivN('pon que tngo un viaje del 8 al 10 a las 9 salgo y vuelvo a las 9 apuntalo');
+      afirmar('el mensaje real («pon que tngo un viaje del 8 al 10 a las 9 salgo y vuelvo a las 9 apuntalo») es un viaje sin destino, con aviso de las horas', JSON.stringify(real) === JSON.stringify({ tipo: 'viaje_sin_destino', desde: '2026-11-08', hasta: '2026-11-10', horas: true }), JSON.stringify(real));
+      afirmar('… y con sitio y relleno («pon que tengo un viaje del 8 al 10 a Francia, salgo a las 9 y vuelvo a las 21, apúntalo») es un viaje a Francia', ivN('pon que tengo un viaje del 8 al 10 a Francia, salgo a las 9 y vuelvo a las 21, apúntalo')?.pais === 'Francia' && ivN('apunta que tengo un viaje del 8 al 10')?.tipo === 'viaje_sin_destino');
+      afirmar('… lo que no es un viaje sigue igual: «recuérdame que tengo un viaje del 8 al 10 a las 9» (pide un recordatorio) y «alarma a las 9 para el viaje» van al modelo', ivN('recuérdame que tengo un viaje del 8 al 10 a las 9') === null && ivN('alarma a las 9 para el viaje') === null && ivN('pon una alarma a las 9') === null);
+      const bcn = cmd.viajeQueAplica(ivN('tengo un viaje a Barcelona del 8 al 10'), false);
+      afirmar('… un viaje por España con sus fechas, sin estar fuera, es un viaje con ese nombre y la hora de España («Cádiz» con su tilde)', JSON.stringify(bcn) === JSON.stringify({ tipo: 'plan', pais: 'Barcelona', zona: 'Europe/Madrid', desde: '2026-11-08', hasta: '2026-11-10' }) && cmd.viajeQueAplica(ivN('me voy a Cádiz del 20 al 22'), false)?.pais === 'Cádiz', JSON.stringify(bcn));
+      afirmar('… estando fuera, sigue siendo volver; «me voy a Valencia el finde» (sin fechas de ida y vuelta) sigue sin ser un viaje', cmd.viajeQueAplica(ivN('tengo un viaje a Barcelona del 8 al 10'), true)?.tipo === 'salida' && cmd.viajeQueAplica(ivN('me voy a Valencia el finde'), false) === null);
+      const PELU = [{ id: 'pelu', tipo: 'evento', titulo: 'Peluquería', fecha_inicio: '2026-11-09T08:00:00.000Z' }];
+      const r1 = await planificar(vacia, { mensaje: 'pon que tngo un viaje del 8 al 10 a las 9 salgo y vuelvo a las 9 apuntalo', pendientes: PELU });
+      afirmar('… Planificar lo guarda como viaje (no como cita), dice que las horas no se guardan y pregunta a dónde', !fila(r1, 'guardar items') && !!fila(r1, 'viaje sin destino desde el 2026-11-08') && meta(r1).respuesta_usuario.includes('(Las horas de salida y vuelta no las guardo en el viaje; si quieres una alarma para salir, dímelo.)') && meta(r1).respuesta_usuario.endsWith('¿A dónde vas? Si no quieres decirlo, no hace falta: lo dejo así.'), meta(r1).respuesta_usuario);
+      const r2 = await planificar(vacia, { mensaje: 'tengo un viaje a Barcelona del 8 al 10', pendientes: PELU });
+      afirmar('… «tengo un viaje a Barcelona del 8 al 10» se planea (aunque empiece hoy no sería volver) y enseña lo que coincide', fila(r2, 'viaje a Barcelona desde el 2026-11-08')?.cuerpo.p_zona === 'Europe/Madrid' && !fila(r2, 'guardar items') && meta(r2).respuesta_usuario.includes('Peluquería'), JSON.stringify(meta(r2)));
+      const BCN = [{ id: 'b', pais: 'Barcelona', zona: 'Europe/Madrid', desde: '2026-11-08', hasta: '2026-11-10', actual: false }, { id: 'z', pais: 'Viaje sin destino', zona: 'Europe/Madrid', desde: '2026-11-20', hasta: '2026-11-22', actual: false }];
+      const c1 = await planificar(vacia, { mensaje: 'cancela el viaje a Barcelona', tramos: BCN });
+      afirmar('… «cancela el viaje a Barcelona» quita ese (por su nombre), no el sin destino', meta(c1).respuesta_usuario.startsWith('Hecho: quitado el viaje a Barcelona') && JSON.stringify(c1).includes('id=eq.b&'), meta(c1).respuesta_usuario);
+      const cita0 = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-08T09:00:00+01:00', confianza: 0.9 }] });
+      const m1 = await planificar(cita0, { mensaje: 'el viaje del 8 al 10 lo tengo ya' });
+      afirmar('… si el modelo aun así devuelve «Viaje, de 09:00 a 09:00» (lo del 6 de noviembre), se guarda como viaje con los días del mensaje, nunca como cita', !fila(m1, 'guardar items') && fila(m1, 'viaje sin destino desde el 2026-11-08')?.cuerpo.p_hasta === '2026-11-10' && turnoDe(m1).motivo === 'viaje_sin_destino', JSON.stringify(meta(m1)));
+      const m2 = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje a Barcelona', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-08T20:00:00+01:00', confianza: 0.9 }] }), { mensaje: 'el sábado viaje a barcelona de 9 a 20' });
+      afirmar('… y «Viaje a Barcelona» de un día, también: viaje por España de ese día', !fila(m2, 'guardar items') && fila(m2, 'viaje a Barcelona desde el 2026-11-08')?.cuerpo.p_hasta === '2026-11-08', JSON.stringify(meta(m2)));
+      const m3 = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Reunión del viaje', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-08T10:00:00+01:00', confianza: 0.9 }] }), { mensaje: 'reunión del viaje el 8 a las 9' });
+      afirmar('… una cita que solo habla del viaje («Reunión del viaje») sigue siendo cita', !!fila(m3, 'guardar items'));
+      // Más casos      afirmar('repaso 92: «apunta que me voy a Madrid del 8 al 10» es un viaje por España; «… sale el vuelo a las 9» también se entiende', cmd.viajeQueAplica(ivN('apunta que me voy a Madrid del 8 al 10'), false)?.pais === 'Madrid' && ivN('pon que tengo un viaje a Japón del 8 al 10 sale el vuelo a las 9')?.pais === 'Japón');
+      const varias = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-10T09:00:00+01:00', confianza: 0.9 }, { tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-11-09T10:00:00+01:00', fecha_fin: '2026-11-09T11:00:00+01:00', confianza: 0.9 }] });
+      const mv = await planificar(varias, { mensaje: 'pon que tengo un viaje del 8 al 10 y el 9 dentista a las 10' });
+      const guardadas = fila(mv, 'guardar items')?.cuerpo;
+      afirmar('repaso 92: con varias cosas a la vez, se apunta el dentista y el viaje se guarda aparte como viaje (no como cita), con su línea y «¿A dónde vas?»', Array.isArray(guardadas) && guardadas.length === 1 && guardadas[0].titulo === 'Dentista' && fila(mv, 'viaje sin destino desde el 2026-11-08')?.cuerpo.p_hasta === '2026-11-10' && meta(mv).nota_zona === '✈️ Y el viaje, aparte (no como cita): del domingo 8 de noviembre al martes 10 de noviembre.\n(Las horas de salida y vuelta no las guardo en el viaje; si quieres una alarma para salir, dímelo.)\n¿A dónde vas? Si no quieres decirlo, no hace falta: lo dejo así.' && turnoDe(mv)?.motivo === 'viaje_sin_destino', JSON.stringify({ g: guardadas, n: meta(mv).nota_zona, t: turnoDe(mv) }));
+      const conSitio = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje a Japón', fecha_inicio: '2026-11-20', fecha_fin: '2026-11-25', confianza: 0.9 }, { tipo: 'tarea', titulo: 'Comprar adaptador', confianza: 0.9 }] }), { mensaje: 'viaje a japón del 20 al 25 y apunta comprar adaptador' });
+      afirmar('… con sitio: el viaje a Japón se guarda aparte (con su diferencia horaria) y la tarea se apunta; sin pregunta abierta', fila(conSitio, 'viaje a Japón desde el 2026-11-20')?.cuerpo.p_zona === 'Asia/Tokyo' && fila(conSitio, 'guardar items')?.cuerpo.length === 1 && /^✈️ Y el viaje, aparte \(no como cita\): del viernes 20 de noviembre al (?:martes 24|miércoles 25) de noviembre en Japón \(/.test(meta(conSitio).nota_zona ?? '') && !JSON.stringify(conSitio).includes('"pregunta_pendiente":true'), JSON.stringify(meta(conSitio)));
+      const dos = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje a Francia', fecha_inicio: '2026-11-08', fecha_fin: '2026-11-10', confianza: 0.9 }, { tipo: 'evento', titulo: 'Viaje a Japón', fecha_inicio: '2026-11-20', fecha_fin: '2026-11-25', confianza: 0.9 }] }), { mensaje: 'viaje a francia del 8 al 10 y a japón del 20 al 25' });
+      afirmar('… con dos viajes en un mensaje, ninguno como cita: pide decirlos de uno en uno', !fila(dos, 'guardar items') && !dos.some((x) => x.url?.includes('planear_viaje')) && meta(dos).respuesta_usuario.includes('no los apunto como citas: dime los viajes de uno en uno'), JSON.stringify(meta(dos)));
+      const fuera = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Viaje', fecha_inicio: '2026-11-08T09:00:00+01:00', fecha_fin: '2026-11-10T09:00:00+01:00', confianza: 0.9 }] }), { mensaje: 'el viaje ese a las 9 ambos días', viaje: PORTUGAL });
+      afirmar('repaso 92: estando fuera, una cita «Viaje» del modelo no pregunta «¿hora de aquí o de España?»: es un viaje', turnoDe(fuera)?.motivo !== 'zona_hora' && !fila(fuera, 'guardar items') && !!fila(fuera, 'viaje sin destino desde el 2026-11-08'), JSON.stringify(meta(fuera)));
+      const BARNA = { pais: 'Barcelona', zona: 'Europe/Madrid', hasta: '2026-11-10' };
+      const dv = await planificar(respuesta({ intencion: 'charla', respuesta_usuario: '¡Genial!' }), { mensaje: 'me voy a Valencia el finde', viaje: BARNA });
+      const dm = await planificar(respuesta({ intencion: 'charla', respuesta_usuario: 'Vale' }), { mensaje: 'estoy en Madrid', viaje: BARNA });
+      afirmar('repaso 92: durante un viaje por España (o sin destino), «me voy a Valencia el finde» y «estoy en Madrid» no acaban el viaje: decide el modelo', meta(dv).intencion === 'charla' && meta(dm).intencion === 'charla' && !JSON.stringify([dv, dm]).includes('volver_de_viaje') && !JSON.stringify(dv).includes('fecha de vuelta'), JSON.stringify([meta(dv), meta(dm)]));
+      const cd = await cpViaje('me voy a Valencia el finde', { viaje: [{ id: 'b', pais: 'Barcelona', zona: 'Europe/Madrid', desde: '2026-11-06', hasta: '2026-11-10', cerrado_at: null }] });
+      afirmar('… y Construir llama al modelo', cd.saltar_modelo === false);
+    }
+    // ir a un sitio de España sin estar de viaje no es un viaje
+    {
+      const e1 = await planificar(respuesta({ intencion: 'charla', respuesta_usuario: '¡Que lo pases bien!' }), { mensaje: 'me voy a Valencia el finde' });
+      afirmar('repaso 88: sin viaje, «me voy a Valencia el finde» no es un viaje: decide el modelo (no «Ya estás en hora de España.»)', !JSON.stringify(e1).includes('Ya estás en hora de España') && meta(e1).intencion === 'charla', JSON.stringify(meta(e1)));
+      const e2 = await planificar(respuesta({ intencion: 'charla', respuesta_usuario: 'Vale' }), { mensaje: 'esta tarde me voy a Madrid' });
+      afirmar('… «esta tarde me voy a Madrid», tampoco («¿Te vas de viaje a España?» era absurdo)', !JSON.stringify(e2).includes('Te vas de viaje') && meta(e2).intencion === 'charla');
+      const e3 = await planificar(vacia, { mensaje: 'me voy a España mañana', viaje: PORTUGAL });
+      afirmar('… estando de viaje, sí: es volver', !!fila(e3, 'fecha de vuelta del viaje'));
+      const ce1 = await cpViaje('me voy a Valencia el finde');
+      const ce2 = await cpViaje('me voy a Valencia el finde', { viaje: [{ id: 'v', pais: 'Portugal', zona: 'Europe/Lisbon', desde: null, hasta: null, cerrado_at: null }] });
+      afirmar('Construir: sin viaje, «me voy a Valencia el finde» llama al modelo; de viaje, no', ce1.saltar_modelo === false && ce2.saltar_modelo === true);
+    }
+    // --- citas en fechas de viaje y la lista de viajes ---
+    {
+      const FRANCIA = [{ pais: 'Francia', zona: 'Europe/Paris', desde: '2026-10-20', hasta: '2026-10-25', actual: false }];
+      const citaF = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-22T10:00:00+02:00', fecha_fin: '2026-10-22T11:00:00+02:00', confianza: 0.95 }] });
+      const f1 = await planificar(citaF, { mensaje: 'dentista el 22 a las 10', tramos: FRANCIA });
+      afirmar('desde España, una cita en las fechas de un viaje a un sitio con la misma hora pregunta antes', !fila(f1, 'guardar items') && meta(f1).respuesta_usuario === 'Esos días estarás de viaje en Francia (del martes 20 de octubre al domingo 25 de octubre). ¿La apunto igualmente?' && turnoDe(f1).motivo === 'aviso_viaje', JSON.stringify(meta(f1)));
+      const hF = hiloDe(f1).map(({ rol, texto }) => ({ rol, texto }));
+      const f2 = await planificar({ error: 'no' }, { mensaje: 'sí', hiloPrevio: hF, pendienteId: 'q-f', tramos: FRANCIA });
+      afirmar('… «sí»: la apunta (con lo que dijo el modelo, sin llamarlo) y cierra la pregunta', !!fila(f2, 'guardar items') && !!fila(f2, 'cerrar pregunta anterior'));
+      const f3 = await planificar({ error: 'no' }, { mensaje: 'no', hiloPrevio: hF, pendienteId: 'q-f', tramos: FRANCIA });
+      afirmar('… «no»: no la apunta', !fila(f3, 'guardar items') && meta(f3).respuesta_usuario === 'Vale, no la apunto.');
+      const alF = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Pastilla', recordar_en: '2026-10-22T09:00:00+02:00', confianza: 0.95 }] }), { mensaje: 'alarma el 22 a las 9 pastilla', tramos: FRANCIA });
+      afirmar('… una alarma en esas fechas no pregunta (se pueden seguir poniendo)', !!fila(alF, 'guardar items'));
+      const enF = await planificar(citaF, { mensaje: 'dentista el 22 a las 10', viaje: { pais: 'Francia', zona: 'Europe/Paris', hasta: '2026-10-25' }, tramos: [{ ...FRANCIA[0], actual: true }] });
+      afirmar('… estando ya en ese viaje, no pregunta (la cita es de allí)', !!fila(enF, 'guardar items'));
+      afirmar('«sí» y «no» contestan a «¿La apunto igualmente?»', ['sí', 'no', 'vale'].every((m) => cmd.elegirPregunta(m, [{ id: 'q-f', pregunta: '¿La apunto igualmente?', hilo: hF }])?.id === 'q-f'));
+      // La sección oculta de los viajes
+      const TR = [{ pais: 'Portugal', zona: 'Europe/Lisbon', desde: null, hasta: '2026-10-15', actual: true }, { pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-20', hasta: '2026-10-30', actual: false }, { pais: 'México', zona: 'America/Mexico_City', desde: '2026-11-05', hasta: null, actual: false }];
+      const lv1 = await planificar(vacia, { mensaje: 'dame mis viajes', tramos: TR });
+      afirmar('«dame mis viajes» → el actual y los planeados, con fechas y diferencia de hora', meta(lv1).respuesta_usuario === '✈️ *Viajes*\n• Portugal: ahora, hasta el jueves 15 de octubre (una hora menos que en España)\n• Japón: del martes 20 de octubre al viernes 30 de octubre (7 horas más que en España)\n• México: desde el jueves 5 de noviembre, sin fecha de vuelta (7 horas menos que en España)', meta(lv1).respuesta_usuario);
+      afirmar('… también «qué viajes tengo», «mis viajes» y /viajes', ['qué viajes tengo', 'mis viajes', 'viajes planeados'].every((m) => cmd.interpretarViaje(m, new Date())?.tipo === 'lista') && cmd.interpretarComando('/viajes', { ahora: new Date(), nombre: 'Lola' })?.tipo === 'viajes');
+      const lv2 = await planificar(vacia, { mensaje: '/viajes' });
+      afirmar('… sin viajes, cómo apuntar uno', meta(lv2).respuesta_usuario.startsWith('No tienes viajes apuntados.'));
+    }
+    // --- fallos reales del 2026-11-06 ---
+    {
+      // Los listados («dame todas las citas», «dame las alarmas») piden la zona de cada elemento; antes no, y salían en hora de España
+      const lc = await planificar(respuesta({ intencion: 'consultar', consulta: { tipo: 'evento', estado: 'pendiente' } }), { mensaje: 'dame todas las citas' });
+      afirmar('la consulta de los listados pide zona_alarma y lugar_alarma (si no, «Médico 22:00» sin «(Portugal)»)', /select=[^&]*zona_alarma,lugar_alarma/.test(meta(lc).consulta_url ?? ''), meta(lc).consulta_url);
+      const ivS = (m) => cmd.interpretarViaje(m, new Date('2026-10-10T08:00:00Z'));
+      afirmar('«Me voy mañana de Portugal» es irse (sin destino); «me voy de compras mañana» no', JSON.stringify(ivS('Me voy mañana de Portugal')) === JSON.stringify({ tipo: 'salida', fecha: '2026-10-11', destino: null }) && ivS('me voy de compras mañana') === null && ivS('vuelvo a España el 20')?.destino?.zona === 'Europe/Madrid' && ivS('me voy mañana de Portugal a México')?.destino?.zona === 'America/Mexico_City');
+      const s1 = await planificar(vacia, { mensaje: 'Me voy mañana de Portugal', viaje: PORTUGAL });
+      afirmar('sin destino, pregunta a dónde va', meta(s1).respuesta_usuario === '¿A dónde vas el domingo 11 de octubre? Si vuelves, dime «a España».' && turnoDe(s1).motivo === 'viaje_destino' && turnoDe(s1).fecha === '2026-10-11', meta(s1).respuesta_usuario);
+      const hiloS = hiloDe(s1).map(({ rol, texto }) => ({ rol, texto }));
+      const s2 = await planificar(vacia, { mensaje: 'A México', hiloPrevio: hiloS, pendienteId: 'q-s', viaje: PORTUGAL, pendientes: [] });
+      afirmar('… «A México»: Portugal hasta hoy y México desde mañana (planear_viaje), y pregunta hasta cuándo', fila(s2, 'fecha de vuelta del viaje')?.cuerpo.p_hasta === '2026-10-10' && fila(s2, 'viaje a México desde el 2026-10-11')?.cuerpo.p_zona === 'America/Mexico_City' && meta(s2).respuesta_usuario.startsWith('Vale: en Portugal hasta el sábado 10 de octubre y luego, desde el domingo 11 de octubre en México'), JSON.stringify(meta(s2)));
+      const s3 = await planificar(vacia, { mensaje: 'a España', hiloPrevio: hiloS, pendienteId: 'q-s', viaje: PORTUGAL });
+      afirmar('… «a España»: Portugal hasta hoy y mañana vuelve a la hora de España', fila(s3, 'fecha de vuelta del viaje')?.cuerpo.p_hasta === '2026-10-10' && meta(s3).respuesta_usuario === 'Vale: en Portugal hasta el sábado 10 de octubre. El domingo 11 de octubre vuelvo a la hora de España.', meta(s3).respuesta_usuario);
+      const s4 = await planificar(vacia, { mensaje: 'mañana vuelvo a casa', viaje: PORTUGAL });
+      afirmar('«mañana vuelvo a casa» = último día hoy, sin preguntar', fila(s4, 'fecha de vuelta del viaje')?.cuerpo.p_hasta === '2026-10-10');
+      const s5 = await planificar(vacia, { mensaje: 'me voy de aquí', viaje: PORTUGAL });
+      afirmar('«me voy de aquí» (hoy) también pregunta a dónde', turnoDe(s5).motivo === 'viaje_destino');
+      const s6 = await planificar(vacia, { mensaje: 'Me voy mañana de Portugal' });
+      afirmar('… y sin viaje apuntado, lo dice', meta(s6).respuesta_usuario.startsWith('No tengo apuntado que estés de viaje.'));
+      afirmar('«a México» y «a España» contestan a «¿A dónde vas?»; «dame todo» no', ['A México', 'a España', 'no lo sé'].every((m) => cmd.elegirPregunta(m, [{ id: 'q-s', pregunta: '¿A dónde vas…?', hilo: hiloS }])?.id === 'q-s') && cmd.elegirPregunta('dame todo', [{ id: 'q-s', pregunta: '¿A dónde vas…?', hilo: hiloS }]) === null);
+      const cvS = await cpViaje('Me voy mañana de Portugal');
+      afirmar('Construir: «Me voy mañana de Portugal» va sin el modelo', cvS.saltar_modelo === true);
+    }
+    // --- viajes planeados y por tramos (base de datos al día) ---
+    {
+      // El reloj de las pruebas es el 10 de octubre de 2026 (sábado)
+      const ivP = (m) => cmd.interpretarViaje(m, new Date('2026-10-10T08:00:00Z'));
+      afirmar('«el 20 me voy a Japón hasta el 30», «del 20 al 30», «dentro de 3 días me voy a México», «me voy a Portugal mañana» son planes', JSON.stringify(ivP('El 20 me voy a Japón hasta el 30')) === JSON.stringify({ tipo: 'plan', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-20', hasta: '2026-10-30' }) && ivP('me voy a Japón del 20 al 30')?.hasta === '2026-10-30' && ivP('Dentro de 3 días me voy a México')?.desde === '2026-10-13' && ivP('Dentro de 3 días me voy a México')?.zona === 'America/Mexico_City' && ivP('Me voy a Portugal mañana')?.desde === '2026-10-11');
+      afirmar('«me quedo hasta dentro de 5 días pero luego me voy a México» encadena los dos tramos', JSON.stringify(ivP('Me quedo hasta dentro de 5 días pero luego me voy a México')) === JSON.stringify({ tipo: 'cadena', hasta: '2026-10-15', siguiente: { pais: 'México', zona: 'America/Mexico_City', desde: '2026-10-16', hasta: null } }), JSON.stringify(ivP('Me quedo hasta dentro de 5 días pero luego me voy a México')));
+      const PEND = [
+        { id: 'p-c', tipo: 'evento', titulo: 'Dentista', fecha_inicio: '2026-10-22T08:00:00.000Z', fecha_fin: '2026-10-22T09:00:00.000Z' },
+        { id: 'p-a', tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-23T15:00:00.000Z' },
+        { id: 'p-f', tipo: 'evento', titulo: 'Cena', fecha_inicio: '2026-11-15T19:00:00.000Z' },
+      ];
+      const pj = await planificar(vacia, { mensaje: 'El 20 me voy a Japón hasta el 30', pendientes: PEND });
+      afirmar('un viaje planeado se guarda con planear_viaje y dice lo que tienes esos días, cada cosa a su hora', fila(pj, 'viaje a Japón desde el 2026-10-20')?.url.endsWith('/rest/v1/rpc/planear_viaje') && fila(pj, 'viaje a Japón desde el 2026-10-20').cuerpo.p_hasta === '2026-10-30' && meta(pj).respuesta_usuario.includes('del martes 20 de octubre al viernes 30 de octubre en Japón (7 horas más que en España)') && meta(pj).respuesta_usuario.includes('Esos días tienes:\n1. 📅 Dentista, jue 22 oct, 10:00\n2. 🔔 Llamar a mamá, vie 23 oct, 17:00\n¿Las mantienes? Dime «mantenlas», «quítalas» o «quita la 2».') && !meta(pj).respuesta_usuario.includes('Cena'), meta(pj).respuesta_usuario);
+      const pf = await planificar(vacia, { mensaje: 'El 20 me voy a Francia hasta el 30', pendientes: PEND });
+      afirmar('a un sitio con la misma hora no dice nada de la hora, pero sí lo que coincide', !meta(pf).respuesta_usuario.includes('hora') && meta(pf).respuesta_usuario.includes('Esos días tienes:') && meta(pf).respuesta_usuario.includes('Dentista'), meta(pf).respuesta_usuario);
+      const pv = await planificar(vacia, { mensaje: 'El 20 me voy a Japón hasta el 30', pendientes: [] });
+      afirmar('… y si no hay nada esos días, lo dice', meta(pv).respuesta_usuario.endsWith('Esos días no tienes citas ni alarmas.'), meta(pv).respuesta_usuario);
+      const ps = await planificar(vacia, { mensaje: 'El 20 me voy a Japón', pendientes: PEND });
+      afirmar('un plan sin vuelta pregunta hasta cuándo y guarda el tramo para la respuesta', meta(ps).respuesta_usuario.endsWith('¿Hasta cuándo estarás allí?') && turnoDe(ps).desde === '2026-10-20' && turnoDe(ps).zona === 'Asia/Tokyo', JSON.stringify(turnoDe(ps)));
+      const ps2 = await planificar(vacia, { mensaje: 'hasta el 25', hiloPrevio: hiloDe(ps).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-p', pendientes: PEND });
+      afirmar('… «hasta el 25»: vuelve a guardar el tramo con su vuelta y dice lo que coincide', fila(ps2, 'viaje a Japón desde el 2026-10-20')?.cuerpo.p_hasta === '2026-10-25' && meta(ps2).respuesta_usuario.includes('Dentista'), JSON.stringify(meta(ps2)));
+      const pc = await planificar(vacia, { mensaje: 'Me quedo hasta dentro de 5 días pero luego me voy a México', viaje: PORTUGAL, pendientes: [] });
+      afirmar('«me quedo hasta … y luego me voy a México»: el último día de Portugal y el tramo de México (no vuelve a España)', fila(pc, 'fecha de vuelta del viaje')?.cuerpo.p_hasta === '2026-10-15' && fila(pc, 'viaje a México desde el 2026-10-16')?.cuerpo.p_desde === '2026-10-16' && meta(pc).respuesta_usuario.startsWith('Vale: en Portugal hasta el jueves 15 de octubre y luego, desde el viernes 16 de octubre en México') && meta(pc).respuesta_usuario.endsWith('¿Hasta cuándo estarás allí?'), meta(pc).respuesta_usuario);
+      const pl = await planificar(vacia, { mensaje: 'luego me voy a México', viaje: PORTUGAL });
+      afirmar('… «luego me voy a México» sin saber cuándo acaba Portugal: pregunta cómo decirlo', meta(pl).respuesta_usuario.startsWith('¿Cuándo te vas a México?'));
+      const pl2 = await planificar(vacia, { mensaje: 'luego me voy a México hasta el 30', viaje: { ...PORTUGAL, hasta: '2026-10-15' }, pendientes: [] });
+      afirmar('… y sabiéndolo, empieza el día siguiente', fila(pl2, 'viaje a México desde el 2026-10-16')?.cuerpo.p_hasta === '2026-10-30');
+      // Una alarma para un día del tramo siguiente: pregunta entre los dos sitios
+      const TRAMOS = [{ ...PORTUGAL, hasta: '2026-10-15', desde: null, actual: true }, { pais: 'México', zona: 'America/Mexico_City', desde: '2026-10-16', hasta: null, actual: false }];
+      const alM = respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Tour', recordar_en: '2026-10-17T10:00:00+02:00', confianza: 0.95 }] });
+      const qt = await planificar(alM, { mensaje: 'ponme una alarma el 17 a las 10 para el tour', viaje: { ...PORTUGAL, hasta: '2026-10-15' }, tramos: TRAMOS });
+      afirmar('una alarma para un día que ya estarás en México pregunta Portugal o México', !fila(qt, 'guardar items') && meta(qt).respuesta_usuario.startsWith('Ese día ya estarás en México (te vas el viernes 16 de octubre).\n¿Las 10:00 de Portugal o de México?\n1. De Portugal'), JSON.stringify(meta(qt)));
+      const qt2 = await planificar({ error: 'no' }, { mensaje: 'México', hiloPrevio: hiloDe(qt).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-t', viaje: { ...PORTUGAL, hasta: '2026-10-15' }, tramos: TRAMOS });
+      const gq = fila(qt2, 'guardar items')?.cuerpo[0];
+      afirmar('… «México»: a las 10:00 de Ciudad de México (16:00 UTC: UTC−6 todo el año) con «(México)»', gq && Date.parse(gq.recordar_en) === Date.parse('2026-10-17T16:00:00Z') && gq.zona_alarma === 'America/Mexico_City' && gq.lugar_alarma === 'México', JSON.stringify(gq));
+      const qt1 = await planificar({ error: 'no' }, { mensaje: '1', hiloPrevio: hiloDe(qt).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-t', viaje: { ...PORTUGAL, hasta: '2026-10-15' }, tramos: TRAMOS });
+      const gq1 = fila(qt1, 'guardar items')?.cuerpo[0];
+      afirmar('… «1»: a las 10:00 de Portugal', gq1 && Date.parse(gq1.recordar_en) === Date.parse('2026-10-17T09:00:00Z') && gq1.zona_alarma === 'Europe/Lisbon', JSON.stringify(gq1));
+      const qe = await planificar(alM, { mensaje: 'ponme una alarma el 17 a las 10 para el tour', viaje: { ...PORTUGAL, hasta: '2026-10-15' } });
+      afirmar('una alarma para después de volver (sin otro tramo) pregunta España o Portugal', meta(qe).respuesta_usuario.startsWith('Ese día ya habrás vuelto a España (estás en Portugal hasta el jueves 15 de octubre).\n¿Las 10:00 de España o de Portugal?'), JSON.stringify(meta(qe)));
+      const qh = await planificar(respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Tour', recordar_en: '2026-10-21T10:00:00+02:00', confianza: 0.95 }] }), { mensaje: 'alarma el 21 a las 10 para el tour', tramos: [{ pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-20', hasta: '2026-10-30', actual: false }] });
+      afirmar('en España, una alarma para un día del viaje planeado a Japón pregunta España o Japón', meta(qh).respuesta_usuario.startsWith('Ese día ya estarás en Japón (te vas el martes 20 de octubre).\n¿Las 10:00 de España o de Japón?'), JSON.stringify(meta(qh)));
+      // Construir: separa el tramo actual de los próximos
+      const cvt = await cpViaje('hola', { viaje: [{ id: 'a', pais: 'Portugal', zona: 'Europe/Lisbon', desde: '2020-01-01', hasta: '2099-01-01', cerrado_at: null }, { id: 'b', pais: 'México', zona: 'America/Mexico_City', desde: '2099-01-02', hasta: null, cerrado_at: null }] });
+      afirmar('Construir: el actual es el que ya empezó (Portugal) y México queda como próximo', cvt.viaje?.pais === 'Portugal' && cvt.tramos.length === 2 && cvt.tramos.find((t) => t.pais === 'México').actual === false && cvt.tramos.find((t) => t.pais === 'Portugal').actual === true, JSON.stringify(cvt.tramos));
+      const cvf = await cpViaje('hola', { viaje: [{ id: 'b', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2099-01-02', hasta: null, cerrado_at: null }] });
+      afirmar('Construir: con solo un viaje planeado, estás en España (sin viaje actual)', cvf.viaje === null && cvf.tramos.length === 1);
+    }
+    // --- la zona de cada alarma y cita ---
+    const le = cmd.lugarEnMensaje;
+    afirmar('«en Lisboa» nombra Portugal (sin preguntar; «Roma» o dos sitios son dudosos); Tenerife es Canarias; «hora de Portugal» y «hora portuguesa» lo dicen claro; «hora española» es España', JSON.stringify(le('ponme una alarma a las 19:00 para coger el avión en Lisboa')) === JSON.stringify({ pais: 'Portugal', zona: 'Europe/Lisbon', explicita: false, dudoso: false }) && le('el vuelo de Lisboa a Tokio a las 19')?.dudoso === true && le('cena en Roma a las 21')?.dudoso === true && le('alarma a las 9 en Tenerife')?.zona === 'Atlantic/Canary' && le('a las 19 hora de Portugal')?.explicita === true && le('a las 19 hora portuguesa')?.zona === 'Europe/Lisbon' && le('a las 9, hora española')?.zona === 'Europe/Madrid' && le('a las 9, hora española')?.explicita === true && le('comprar pan a las 5') === null && le('a las 10 hora local de Tokio')?.zona === 'Asia/Tokyo');
+    const ALARMA_19 = respuesta({ intencion: 'guardar', items: [{ tipo: 'tarea', titulo: 'Coger el avión', recordar_en: '2027-01-20T19:00:00+01:00', confianza: 0.95 }] });
+    const z1 = await planificar(ALARMA_19, { mensaje: 'Ponme una alarma el 20 de enero a las 19:00 para coger el avión en Lisboa' });
+    const g84 = fila(z1, 'guardar items')?.cuerpo[0];
+    afirmar('en España, «a las 19:00 … en Lisboa» → sin preguntar, a las 19:00 de Lisboa con «(Portugal)»', g84 && Date.parse(g84.recordar_en) === Date.parse('2027-01-20T19:00:00Z') && g84.zona_alarma === 'Europe/Lisbon' && g84.lugar_alarma === 'Portugal', JSON.stringify(z1.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+    const zd = await planificar(ALARMA_19, { mensaje: 'alarma el 20 de enero a las 19 para el vuelo de Lisboa a Tokio' });
+    afirmar('si no está claro (dos sitios con horas distintas) pregunta por el primero', !fila(zd, 'guardar items') && meta(zd).respuesta_usuario.startsWith('¿Las 19:00 de España o de Portugal?'), JSON.stringify(meta(zd)));
+    const z2 = await planificar(nada, { mensaje: '2', hiloPrevio: hiloDe(zd).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-84' });
+    const g2z = fila(z2, 'guardar items')?.cuerpo[0];
+    afirmar('… «2»: a las 19:00 de Lisboa, con su zona y su sitio para el paréntesis', g2z && Date.parse(g2z.recordar_en) === Date.parse('2027-01-20T19:00:00Z') && g2z.zona_alarma === 'Europe/Lisbon' && g2z.lugar_alarma === 'Portugal', JSON.stringify(g2z));
+    const z2b = await planificar(nada, { mensaje: '1', hiloPrevio: hiloDe(zd).map(({ rol, texto }) => ({ rol, texto })), pendienteId: 'q-84' });
+    const g84b = fila(z2b, 'guardar items')?.cuerpo[0];
+    afirmar('… «1»: a las 19:00 de España y sin zona (sin paréntesis)', g84b && Date.parse(g84b.recordar_en) === Date.parse('2027-01-20T18:00:00Z') && !g84b.zona_alarma, JSON.stringify(g84b));
+    const z3 = await planificar(ALARMA_19, { mensaje: 'alarma el 20 de enero a las 19 hora de Portugal para coger el avión' });
+    const g3 = fila(z3, 'guardar items')?.cuerpo[0];
+    afirmar('«hora de Portugal» no pregunta: a las 19:00 de Lisboa con su zona', g3 && Date.parse(g3.recordar_en) === Date.parse('2027-01-20T19:00:00Z') && g3.zona_alarma === 'Europe/Lisbon', JSON.stringify(z3.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+    const z4 = await planificar(ALARMA_19, { mensaje: 'alarma el 20 de enero a las 19 hora española', viaje: PORTUGAL });
+    const g4 = fila(z4, 'guardar items')?.cuerpo[0];
+    afirmar('de viaje, «hora española» no pregunta: las 19:00 de España, sin zona', g4 && Date.parse(g4.recordar_en) === Date.parse('2027-01-20T18:00:00Z') && !g4.zona_alarma, JSON.stringify(z4.map((x) => x.meta?.respuesta_usuario ?? x.etiqueta)));
+    // Mover una alarma que tiene zona: en su zona, sin preguntar (aunque estés en España)
+    const PEND_PT = [{ id: 'p-1', tipo: 'tarea', titulo: 'Coger el avión', recordar_en: '2027-01-20T19:00:00.000Z', zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' }];
+    const z5 = await planificar(respuesta({ intencion: 'corregir', correccion: { item_ids: ['p-1'], cambios: { recordar_en: '2027-01-20T20:00:00+01:00' } } }), { mensaje: 'muévela a las 20', pendientes: PEND_PT });
+    const c5 = z5.find((x) => x.metodo === 'PATCH' && x.url.includes('/items?') && x.url.includes('p-1'));
+    afirmar('«muévela a las 20» sobre la alarma de Portugal → las 20:00 de Portugal, sin preguntar, y sigue con su zona', c5 && Date.parse(c5.cuerpo.recordar_en) === Date.parse('2027-01-20T20:00:00Z') && c5.cuerpo.zona_alarma === 'Europe/Lisbon', JSON.stringify(z5.map((x) => [x.etiqueta, x.cuerpo, x.meta?.respuesta_usuario])));
+    // Una cita que nombra otro sitio estando en España: se pregunta; «2» la pone a la hora de allí
+    const CITA_LX = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Reunión', fecha_inicio: '2027-01-20T10:00:00+01:00', fecha_fin: '2027-01-20T11:00:00+01:00', confianza: 0.95 }] });
+    const z6 = await planificar(CITA_LX, { mensaje: 'reunión en Lisboa el 20 de enero a las 10' });
+    const g6 = fila(z6, 'guardar items')?.cuerpo[0];
+    afirmar('«reunión en Lisboa a las 10» estando en España → sin preguntar, a las 10:00 de Lisboa con su zona', g6 && Date.parse(g6.fecha_inicio) === Date.parse('2027-01-20T10:00:00Z') && Date.parse(g6.fecha_fin) === Date.parse('2027-01-20T11:00:00Z') && g6.zona_alarma === 'Europe/Lisbon', JSON.stringify(g6));
+    // «Mañana» en Japón a las 7:30 (en España aún es la noche anterior): el día de allí
+    {
+      const noche = new Date('2026-11-06T22:30:00Z'); // Madrid 23:30 del 6; Tokio 07:30 del 7
+      const datosM = { intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Cena', fecha_inicio: '2026-11-07T20:00:00+01:00' }] };
+      const plan = cmd.planearZona(datosM, 'cena mañana a las 20', noche, { viaje: TOKIO });
+      afirmar('en Japón a las 7:30, «mañana» es un día más que el «mañana» de España (dias = 1); con fecha de vuelta, citas y alarmas a la hora de allí', plan?.dias === 1 && plan.citas === 'local' && plan.alarmas === 'local', JSON.stringify(plan));
+      afirmar('… sin «mañana» no se toca el día; en España sin viaje ni sitio, null (todo como siempre)', cmd.planearZona(datosM, 'cena el 8 a las 20', noche, { viaje: TOKIO })?.dias === 0 && cmd.planearZona(datosM, 'cena el 8 a las 20', noche, {}) === null);
+    }
+    // Una cita de viaje para dentro de un rato se convierte en alarma: con la zona de allí
+    {
+      const pronto = respuesta({ intencion: 'guardar', items: [{ tipo: 'evento', titulo: 'Taxi', fecha_inicio: '2026-10-10T12:00:00+02:00', confianza: 0.95 }] });
+      const zt = await planificar(pronto, { mensaje: 'taxi hoy a las 12', viaje: { ...PORTUGAL, hasta: '2026-10-20' } });
+      const gt2 = fila(zt, 'guardar items')?.cuerpo[0];
+      afirmar('una cita de viaje que pasa a alarma (antes de las 02:00) lleva la zona de allí: las 12:00 de Lisboa', gt2 && gt2.tipo === 'tarea' && gt2.zona_alarma === 'Europe/Lisbon' && Date.parse(gt2.recordar_en) === Date.parse('2026-10-10T11:00:00Z'), JSON.stringify(gt2));
+    }
+    // Resultado: el listado escribe cada alarma en su zona
+    {
+      const lst = await correr(nodo('resultado.js'), { input: [{ tipo: 'tarea', titulo: 'Avión', recordar_en: '2026-10-13T18:00:00+00:00', zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' }, { tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-13T15:00:00+00:00' }], nodos: { Planificar: [{ meta: { ok: true, intencion: 'consultar', avisos: [], respuesta_usuario: 'x', pregunta: null, error: null, ahora: '2026-10-10T08:00:00.000Z', consulta_url: 'x', consulta: { tipo: null, lista: null, estado: 'pendiente', con_rango: false, limite: 500 }, zona_texto: 'Asia/Tokyo', lugar_texto: 'Japón' } }], 'Escribir en Supabase': [{ id: 'x' }] } }).then((r) => r[0].mensajes.join('\n\n'));
+      afirmar('el listado escribe «Avión … 19:00 (Portugal)» y «Llamar a mamá … 17:00» sin paréntesis aunque estés en Japón, sin línea de citas', lst.includes('• 🔔 Avión, mar 13 oct, 19:00 (Portugal)') && lst.includes('• 🔔 Llamar a mamá, mar 13 oct, 17:00') && !lst.includes('🕒'), lst);
+    }
+    {
+      const turnoGrande = JSON.stringify({ intencion: 'aclarar', motivo: 'confirmar_agenda', dias: ['2027-01-20'], zona_plan: { zona: 'Europe/Lisbon', lugar: 'x'.repeat(3000) }, pregunta: '¿La apunto igualmente?', items: [] });
+      const cvh = await cpViaje('sí', { pregunta: [{ id: 'q-h', pregunta: '¿La apunto igualmente?', hilo: [{ rol: 'user', texto: 'comida a las 14' }, { rol: 'model', texto: turnoGrande }] }] });
+      const enviado = cvh.cuerpo.contents.find((c) => c.role === 'model')?.parts[0].text ?? '';
+      afirmar('el modelo recibe los turnos del código sin los datos internos (menos tokens); Planificar recibe el hilo entero', cvh.saltar_modelo === false && enviado.includes('¿La apunto igualmente?') && !enviado.includes('xxxx') && cvh.hilo_previo[1].texto === turnoGrande, enviado.slice(0, 200));
+    }
+    const cv4 = await cpViaje('hola', { viaje: [{ error: { message: 'HTTP 404' } }] });
+    afirmar('Construir: sin la base de datos al día (la lectura falla) no hay viaje', cv4.viaje === null);
   }
 
   console.log(`\n${pasan} comprobaciones correctas, ${fallan.length} con fallo.`);

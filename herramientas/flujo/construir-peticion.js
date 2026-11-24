@@ -31,14 +31,18 @@ const sinAcentos = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '
 // (MAX_CONTENIDO_MODELO): sirve para saber de qué va cada uno; para añadirle algo no hace falta el texto entero (lo concatena la base de datos).
 const MAX_CONTENIDO_MODELO = 120;
 const refs = {};
+// La zona de cada alarma (base de datos): no se le enseña al modelo (el prompt no cambia); Planificar la usa para escribir la hora y para entender
+// «muévela a las 20» en la hora de esa alarma
+const zonaDeRef = {};
 const itemsPendientes = $('Leer items pendientes')
   .all()
   .map((i) => i.json)
   .filter((r) => r && typeof r.id === 'string')
   .map((r, n) => {
     // created_at no se le enseña al modelo (el prompt no cambia): solo sirve para «reciente», abajo
-    const { id, created_at: _creado, ...resto } = r;
+    const { id, created_at: _creado, zona_alarma: zonaAlarma, lugar_alarma: lugarAlarma, ...resto } = r;
     refs[`i${n + 1}`] = id;
+    if (typeof zonaAlarma === 'string' && zonaAlarma !== '') zonaDeRef[`i${n + 1}`] = { zona_alarma: zonaAlarma, lugar_alarma: typeof lugarAlarma === 'string' && lugarAlarma !== '' ? lugarAlarma : zonaAlarma };
     if (typeof resto.contenido === 'string') {
       const c = resto.contenido.replace(/\s+/g, ' ').trim();
       resto.contenido = c.length > MAX_CONTENIDO_MODELO ? `${c.slice(0, MAX_CONTENIDO_MODELO)}…` : c || null;
@@ -109,12 +113,12 @@ const reabribles = [...new Set([...(leidoAvisos?.citados ?? []), ...recientes].f
 // tarde a una pregunta ya resuelta se contesta por código si se apuntó algo hace menos de 2 minutos (tipoSuelto, en planificar.js)
 const primeroLeido = $('Leer items pendientes').all().map((i) => i.json).find((r) => r && typeof r.id === 'string');
 const reciente = primeroLeido && typeof primeroLeido.created_at === 'string'
-  ? { ref: 'i1', tipo: primeroLeido.tipo, titulo: primeroLeido.titulo, recordar_en: primeroLeido.recordar_en ?? null, fecha_limite: primeroLeido.fecha_limite ?? null, fecha_inicio: primeroLeido.fecha_inicio ?? null, created_at: primeroLeido.created_at }
+  ? { ref: 'i1', tipo: primeroLeido.tipo, titulo: primeroLeido.titulo, recordar_en: primeroLeido.recordar_en ?? null, fecha_limite: primeroLeido.fecha_limite ?? null, fecha_inicio: primeroLeido.fecha_inicio ?? null, zona_alarma: primeroLeido.zona_alarma ?? null, lugar_alarma: primeroLeido.lugar_alarma ?? null, created_at: primeroLeido.created_at }
   : null;
 
 // Para "Planificar": lo justo de cada pendiente para resolver "todas las tareas", "todos los pensamientos"… y nombrar lo que se va a tocar
 // (sin las alarmas ya sonadas: «quita todas las alarmas» no debe contar las que ya pasaron)
-const pendientes = itemsPendientes.filter((i) => i.estado !== 'hecho').map(({ id, tipo, titulo, lista, proyecto, recordar_en, fecha_limite, fecha_inicio, fecha_fin }) => ({ id, tipo, titulo, lista, proyecto, recordar_en, fecha_limite, fecha_inicio, fecha_fin }));
+const pendientes = itemsPendientes.filter((i) => i.estado !== 'hecho').map(({ id, tipo, titulo, lista, proyecto, recordar_en, fecha_limite, fecha_inicio, fecha_fin }) => ({ id, tipo, titulo, lista, proyecto, recordar_en, fecha_limite, fecha_inicio, fecha_fin, ...(zonaDeRef[id] ?? {}) }));
 // Tipo y fechas de TODO lo que el modelo ve (también las alarmas ya sonadas), por referencia corta: Planificar las usa al cambiar de tipo
 // (una alarma pasa a cita con su hora, una cita a tarea con su día…) y para preguntar la hora si falta
 const fechas = Object.fromEntries(itemsPendientes.map(({ id, tipo, titulo, recordar_en, fecha_limite, fecha_inicio, fecha_fin }) => [id, { tipo, titulo, recordar_en: recordar_en ?? null, fecha_limite: fecha_limite ?? null, fecha_inicio: fecha_inicio ?? null, fecha_fin: fecha_fin ?? null }]));
@@ -133,7 +137,7 @@ const proyectosActivos = proyectos.filter((p) => p.estado === 'activo').map((p) 
 const agenda = itemsPendientes
   .filter((i) => i.estado !== 'hecho')
   .filter((i) => (i.tipo === 'evento' && i.fecha_inicio) || (i.tipo === 'tarea' && i.fecha_limite))
-  .map(({ id, tipo, titulo, fecha_inicio, fecha_fin, fecha_limite }) => ({ id, tipo, titulo, fecha_inicio, fecha_fin, fecha_limite }));
+  .map(({ id, tipo, titulo, fecha_inicio, fecha_fin, fecha_limite }) => ({ id, tipo, titulo, fecha_inicio, fecha_fin, fecha_limite, ...(zonaDeRef[id] ?? {}) }));
 
 // Archivos recibidos (los 60 más recientes). Se le enseñan al modelo los pendientes de clasificar, el más reciente primero
 // (a1), con referencias cortas como los items, más el archivo al que el usuario se refirió al RESPONDER a un mensaje: su foto
@@ -204,7 +208,7 @@ try {
 }
 const rutasConocidas = carpetasConocidas.map((c) => c.ruta);
 
-// La conversación reciente (sección 71, a petición del usuario): los últimos mensajes suyos y lo que se le contestó, para que el modelo
+// La conversación reciente: los últimos mensajes suyos y lo que se le contestó, para que el modelo
 // entienda una corrección («no, quiero que…») o una referencia a algo de hace un momento. Solo contexto: ya está resuelto. MEMORIA_MENSAJES = 0
 // lo apaga. Se quitan los mensajes que no se contestaron por separado (los que se juntaron con este) y los que repiten este mismo texto.
 let conversacion = [];
@@ -266,7 +270,7 @@ const archivosConocidos = filasArchivos.map((f) => ({ id: f.id, nombre: f.nombre
 // Pueden estar abiertas hasta tres preguntas a la vez (el usuario escribe antes de que le llegue la respuesta): el mensaje contesta a la
 // que encaja con lo que dice, y una orden nueva («borra…», «dame…») no contesta a ninguna y las deja abiertas.
 // Las funciones son la MISMA sección de planificar.js, que el generador inserta aquí; no editar aquí.
-const { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento } = __COMANDOS__;
+const { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarCrearCarpeta, interpretarNotaEnCarpeta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento, interpretarVerArchivos, interpretarViaje, respuestaViaje, viajeQueAplica } = __COMANDOS__;
 const hiloCoherente = (h) =>
   h.length >= 2 && h.length % 2 === 0 && h.every((t, i) => t?.rol === (i % 2 === 0 ? 'user' : 'model') && typeof t.texto === 'string' && t.texto !== '');
 const todas = $('Leer pregunta pendiente')
@@ -329,14 +333,15 @@ const preguntasIgnoradas = pendiente || !Number.isFinite(recibido)
   ? []
   : abiertas
     .filter((q) => Number.isFinite(Date.parse(q.hilo.at(-1)?.en ?? '')) && recibido > Date.parse(q.hilo.at(-1).en) + MARGEN_VISTA_MS)
-    .map((q) => ({ id: q.id, pregunta: q.pregunta, silenciosa: motivoDe(q) === 'oferta' }));
+    // La oferta de la charla, «¿Hasta cuándo estarás allí?» y «¿A dónde vas?» de un viaje sin destino (91) se cierran sin decir nada
+    .map((q) => ({ id: q.id, pregunta: q.pregunta, silenciosa: ['oferta', 'viaje_hasta', 'viaje_sin_destino'].includes(motivoDe(q)) }));
 
 // El nombre que el usuario le ha puesto a la secretaria vive en la memoria con un término fijo. Sin nombre, la primera respuesta es
 // preguntárselo (lo hace Planificar); si la última pregunta pendiente ya era esa, el mensaje es la respuesta y se procesa con el modelo.
 const NOMBRE_TERMINO = 'nombre de la secretaria';
 const filaNombre = memoria.find((m) => sinAcentos(m.termino) === NOMBRE_TERMINO);
 const nombreSecretaria = filaNombre ? filaNombre.significado : null;
-// Una propuesta concreta de la secretaria aceptada («sí», «Mueve los archivos»…; sección 74): se trabaja con la orden propuesta
+// Una propuesta concreta de la secretaria aceptada («sí», «Mueve los archivos»…): se trabaja con la orden propuesta
 const sugerida = aceptaSugerencia(entrada.mensaje, hiloPrevio);
 const mensajeTrabajo = sugerida?.tipo === 'si' ? sugerida.orden : entrada.mensaje;
 const esperaNombre = hiloPrevio.length > 0 && (() => {
@@ -347,6 +352,28 @@ const esperaNombre = hiloPrevio.length > 0 && (() => {
   }
 })();
 const pedirNombre = nombreSecretaria === null && !esperaNombre;
+// Los viajes: «Leer viaje» devuelve el tramo actual y los próximos (viajes_vigentes). El ACTUAL es el
+// que ya ha empezado (sin «desde» o con «desde» ya llegado en su zona); los demás, los próximos. Sin la base de datos al día falla sin cortar el flujo y no hay viaje
+const diaEnZonaCP = (zona) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: zona }).format(new Date());
+  } catch (e) {
+    return null;
+  }
+};
+const tramos = (() => {
+  try {
+    return $('Leer viaje').all().map((i) => i.json)
+      .filter((r) => r && typeof r.zona === 'string' && typeof r.pais === 'string' && !r.cerrado_at && diaEnZonaCP(r.zona) !== null)
+      .map((r) => ({ id: typeof r.id === 'string' ? r.id : null, pais: r.pais, zona: r.zona, desde: typeof r.desde === 'string' ? r.desde.slice(0, 10) : null, hasta: typeof r.hasta === 'string' ? r.hasta.slice(0, 10) : null }));
+  } catch (e) {
+    return []; // el nodo no se ejecutó (flujo antiguo)
+  }
+})();
+const empezados = tramos.filter((t) => !t.desde || t.desde <= diaEnZonaCP(t.zona));
+const actualTramo = empezados.sort((a, b) => String(a.desde ?? '').localeCompare(String(b.desde ?? ''))).at(-1) ?? null;
+for (const t of tramos) t.actual = t === actualTramo;
+const viaje = actualTramo ? { pais: actualTramo.pais, zona: actualTramo.zona, hasta: actualTramo.hasta } : null;
 
 // Comandos y frases fijas (/help, /pending, «cómo te llamas», «llámate Lola», «qué tengo hoy»…): los resuelve "Planificar" sin el
 // modelo, y lo mismo la primera pregunta del nombre. En esos casos no se llama a Gemini (nodo "¿Hace falta el modelo?"): ni espera ni
@@ -368,6 +395,10 @@ const saltarModelo =
   (!pedirNombre && !esperaNombre && respuestaOferta(entrada.mensaje, hiloPrevio) !== null) ||
   // Un archivo con pie (o su confirmación respondida) que es solo una ruta de carpeta: se archiva por código
   (!pedirNombre && !esperaNombre && interpretarCarpetaSuelta(entrada.mensaje, refsCitados) !== null) ||
+  // «Ponme en Budapest que…»: una nota en esa carpeta
+  (!pedirNombre && !esperaNombre && refsCitados.length === 0 && interpretarNotaEnCarpeta(entrada.mensaje, rutasConocidas) !== null) ||
+  // «Crea la carpeta Recetas (dentro de Fotos)»
+  (!pedirNombre && !esperaNombre && interpretarCrearCarpeta(entrada.mensaje) !== null) ||
   // Meter una carpeta dentro de otra: se reconoce por código («mete la carpeta Viajes dentro de Fotos», «mueve Budapest a Viajes»)
   sugerida !== null ||
   (!pedirNombre && !esperaNombre && interpretarMoverCarpeta(entrada.mensaje, rutasConocidas) !== null) ||
@@ -376,9 +407,12 @@ const saltarModelo =
   (!pedirNombre && !esperaNombre && interpretarMoverArchivoNombre(entrada.mensaje) !== null) ||
   (!pedirNombre && !esperaNombre && interpretarMoverEsos(entrada.mensaje, rutasConocidas) !== null) ||
   (!pedirNombre && !esperaNombre && interpretarMoverContenido(entrada.mensaje, rutasConocidas) !== null) ||
+  (!pedirNombre && !esperaNombre && interpretarVerArchivos(entrada.mensaje, rutasConocidas) !== null) ||
   (!pedirNombre && !esperaNombre && (movidosDe(filaCitada) !== null || (movidosRecientes?.ultimo === true && movidosRecientes.deshacer.length > 0)) && interpretarDeshacerMovimiento(entrada.mensaje)) ||
   (!pedirNombre && !esperaNombre && refsCitados.length === 0 && archivarUltimoLote(entrada.mensaje, loteReciente) !== null) ||
-  (!pedirNombre && !esperaNombre && respuestaCarpeta(entrada.mensaje, hiloPrevio) !== null);
+  (!pedirNombre && !esperaNombre && respuestaCarpeta(entrada.mensaje, hiloPrevio) !== null) ||
+  // Viajes: «estoy en Portugal», «he vuelto», «dónde estoy» y las respuestas a «¿hasta cuándo?», «¿qué ciudad?» y «¿hora de España o de allí?»
+  (!pedirNombre && !esperaNombre && (respuestaViaje(entrada.mensaje, hiloPrevio, new Date()) !== null || viajeQueAplica(interpretarViaje(entrada.mensaje, new Date()), viaje !== null && viaje.zona !== 'Europe/Madrid') !== null));
 
 // Si responde a un aviso, el modelo recibe delante del mensaje de qué alarma o cita se trata (solo en ese caso: el resto de mensajes
 // le llegan igual que siempre). Así «muévela al viernes a las 9» sabe a qué se refiere.
@@ -427,6 +461,22 @@ const notaAviso = avisoCitado.length > 0
   ? `[El usuario responde a tu aviso de: ${avisoCitado.map(describirCitado).join('; ')}. Si pide aplazarla, moverla o cambiarla, es un corregir de ${avisoCitado.length === 1 ? 'ese elemento' : 'uno de ellos'}.]\n`
   : '';
 
+// Los turnos que escribió el código llevan datos internos (la respuesta del modelo guardada con la pregunta de la hora, sus referencias, el plan
+// de la zona, los lotes…): el modelo no los necesita y gastan tokens y tiempo. Se le pasa solo lo que se preguntó. Planificar
+// sigue recibiendo el hilo entero
+const INTERNOS_TURNO = ['respuesta', 'refs', 'plan', 'zona_plan', 'orden', 'opciones', 'archivos', 'olvidar', 'lotes', 'aviso_compra'];
+function turnoParaModelo(texto) {
+  try {
+    const t = JSON.parse(texto);
+    // Solo los turnos del código (llevan origen o motivo): uno del propio modelo le llega tal cual
+    if (!t || typeof t !== 'object' || (t.origen !== 'codigo' && typeof t.motivo !== 'string') || !INTERNOS_TURNO.some((k) => k in t)) return texto;
+    const limpio = Object.fromEntries(Object.entries(t).filter(([k]) => !INTERNOS_TURNO.includes(k)));
+    return JSON.stringify(limpio);
+  } catch (e) {
+    return texto;
+  }
+}
+
 const sistema = PROMPT
   .split('{{fecha_actual}}').join(entrada.fecha_actual)
   .split('{{proyectos}}').join(proyectosActivos.length > 0 ? proyectosActivos.join(', ') : '(ninguno todavía)')
@@ -464,6 +514,9 @@ return [
         return citada ? { ...citada, ultimo: true } : movidosRecientes;
       })(),
       archivos_conocidos: archivosConocidos,
+      // El viaje activo y todos los tramos, el actual y los próximos
+      viaje,
+      tramos,
       // Cuántos mensajes anteriores vio el modelo (para la evaluación de la memoria; el texto no se repite aquí)
       conversacion_vista: conversacion.length,
       agenda,
@@ -491,7 +544,7 @@ return [
       cuerpo: {
         systemInstruction: { parts: [{ text: sistema }] },
         contents: [
-          ...hiloPrevio.map((t) => ({ role: t.rol, parts: [{ text: t.texto }] })),
+          ...hiloPrevio.map((t) => ({ role: t.rol, parts: [{ text: t.rol === 'model' ? turnoParaModelo(t.texto) : t.texto }] })),
           { role: 'user', parts: [{ text: `${notaConversacion}${notaParte}${notaAviso}${notaArchivos}${notaCitada}${notaOferta}${entrada.mensaje}` }] },
         ],
         generationConfig: {

@@ -116,6 +116,8 @@ async function main() {
   {
     const [r] = await redactar([{ id: U1, titulo: 'Dentista', fecha_inicio: '2026-10-12T08:00:00+00:00' }], RECIENTE);
     const c = r.cuerpo;
+    const [pt] = await redactar([{ id: U1, titulo: 'Dentista', fecha_inicio: '2026-10-12T08:00:00+00:00', zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' }], RECIENTE);
+    afirmar('una cita puesta en hora de Portugal: su hora y su sitio; una de España, sin paréntesis', pt.texto === '⏰ *Dentista* empieza a las 09:00 Portugal (en 30 min).' && r.texto === '⏰ *Dentista* empieza a las 10:00 (en 30 min).', `${pt.texto} | ${r.texto}`);
     afirmar('con la ventana abierta, texto libre al número permitido', c.type === 'text' && c.messaging_product === 'whatsapp' && c.to === '34600111222' && c.text.preview_url === false, JSON.stringify(c));
     afirmar('un solo evento: título, hora de Madrid y minutos que faltan', r.texto === '⏰ *Dentista* empieza a las 10:00 (en 30 min).', r.texto);
     afirmar('lleva los ids y la marca de enviado con la hora actual', r.ids.join() === U1 && r.marca.aviso_whatsapp_enviado_at === AHORA);
@@ -157,7 +159,11 @@ async function main() {
     afirmar('el JSON sobrevive a un ida y vuelta', JSON.stringify(JSON.parse(texto)) === texto);
     const sch = por('Cada minuto');
     afirmar('se dispara cada minuto', sch.type === 'n8n-nodes-base.scheduleTrigger' && sch.parameters.rule.interval[0].field === 'minutes' && sch.parameters.rule.interval[0].minutesInterval === 1);
-    afirmar('cadena: Configuración, lectura, filtro, último mensaje, redacción, envío y marcado', ['Configuración', 'Leer avisos vencidos', 'Filtrar avisos', 'Leer último mensaje', 'Redactar aviso', 'Enviar WhatsApp', 'Marcar avisados'].slice(0, -1).every((n, i, a) => flujo.connections[n].main[0][0].node === ['Leer avisos vencidos', 'Filtrar avisos', 'Leer último mensaje', 'Redactar aviso', 'Enviar WhatsApp', 'Marcar avisados'][i]));
+    {
+      const cadena = ['Configuración', 'Leer avisos vencidos', 'Filtrar avisos', 'Leer último mensaje', 'Redactar aviso', 'Enviar WhatsApp', 'Marcar avisados'];
+      afirmar('cadena: Configuración, lectura, filtro, último mensaje, redacción, envío y marcado', cadena.slice(0, -1).every((n, i) => flujo.connections[n].main[0][0].node === cadena[i + 1]));
+      afirmar('Leer avisos vencidos lee la zona de cada cita (base de datos)', flujo.nodes.find((n) => n.name === 'Leer avisos vencidos').parameters.url.includes('select=id,tipo,titulo,estado,fecha_inicio,zona_alarma,lugar_alarma,'));
+    }
     afirmar('los dos disparadores entran por Configuración', flujo.connections['Cada minuto'].main[0][0].node === 'Configuración' && flujo.connections['Disparador manual'].main[0][0].node === 'Configuración');
     const leerAv = por('Leer avisos vencidos');
     afirmar('Leer avisos vencidos: solo eventos pendientes, aviso vencido, sin enviar y por empezar', ['tipo=eq.evento', 'estado=eq.pendiente', 'aviso_whatsapp_en=lte.', 'aviso_whatsapp_enviado_at=is.null', 'fecha_inicio=gt.'].every((t) => leerAv.parameters.url.includes(t)) && leerAv.alwaysOutputData === true && leerAv.parameters.method === 'GET');

@@ -35,17 +35,71 @@ const textoError = (e) => (typeof e === 'string' ? e : (e?.message ?? JSON.strin
 // Los caracteres de formato de WhatsApp en un título romperían la negrita o la cursiva
 const limpiar = (s) => String(s ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim();
 
-const fmtDia = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: 'numeric', month: 'short' });
-const fmtHora = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+// Viajes: en un sitio con otra hora, las horas se escriben en la de allí (Planificar lo dice en meta.zona_texto). Sin
+// viaje (o fuera de n8n, como en las pruebas del resumen, donde no hay $), en hora de España
+const ZONA_TEXTO = (() => {
+  try {
+    const z = $('Planificar').first().json.meta?.zona_texto;
+    if (typeof z !== 'string' || z === '') return 'Europe/Madrid';
+    new Intl.DateTimeFormat('es-ES', { timeZone: z }); // una zona que no existe lanza un error: entonces, España
+    return z;
+  } catch (e) {
+    return 'Europe/Madrid';
+  }
+})();
+const fmtDia = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA_TEXTO, weekday: 'short', day: 'numeric', month: 'short' });
+const fmtHora = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA_TEXTO, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-const fmtClave = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit' });
-const claveDia = (iso) => fmtClave.format(new Date(iso));
+const fmtClave = new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_TEXTO, year: 'numeric', month: '2-digit', day: '2-digit' });
+// Un DÍA fijo (la fecha límite de una tarea, guardada como las 23:59 de Madrid, o una fecha sin hora) es ese día del calendario de España en
+// cualquier zona: en Japón, las 23:59 de Madrid ya son el día siguiente y en América una fecha sin hora saldría el día antes
+const fmtDiaMadrid = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', weekday: 'short', day: 'numeric', month: 'short' });
+const fmtClaveMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit' });
+const fmtHoraMadrid = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const esDiaFijo = (iso) => (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) || fmtHoraMadrid.format(new Date(iso)) === '23:59';
+const claveDia = (iso) => (esDiaFijo(iso) ? fmtClaveMadrid : fmtClave).format(new Date(iso));
 
 function dia(iso) {
-  const p = Object.fromEntries(fmtDia.formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  const p = Object.fromEntries((esDiaFijo(iso) ? fmtDiaMadrid : fmtDia).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
   return `${p.weekday} ${p.day} ${p.month}`.replace(/\./g, '');
 }
-const hora = (iso) => fmtHora.format(new Date(iso));
+// Las horas de las citas van en la zona de donde estés (tramo 2); se anota que se usó para decirlo al final
+let usoZonaTexto = false;
+const hora = (iso) => {
+  if (ZONA_TEXTO !== 'Europe/Madrid') usoZonaTexto = true;
+  return fmtHora.format(new Date(iso));
+};
+// Las alarmas, en cambio, se escriben SIEMPRE a su hora y en su zona: las de Madrid sin más y las demás con el sitio entre
+// paréntesis («19:00 (Portugal)»), estés donde estés. La zona viene de items.zona_alarma (base de datos al día); sin ella, Madrid
+const zonaDeAlarma = (r) => {
+  const z = typeof r?.zona_alarma === 'string' && r.zona_alarma !== '' ? r.zona_alarma : 'Europe/Madrid';
+  try {
+    new Intl.DateTimeFormat('es-ES', { timeZone: z });
+    return z;
+  } catch (e) {
+    return 'Europe/Madrid';
+  }
+};
+function diaAlarma(r) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('es-ES', { timeZone: zonaDeAlarma(r), weekday: 'short', day: 'numeric', month: 'short' }).formatToParts(new Date(r.recordar_en)).map((x) => [x.type, x.value]));
+  return `${p.weekday} ${p.day} ${p.month}`.replace(/\./g, '');
+}
+// Estando fuera, se anota si se escribió alguna alarma o cita de España (sin país): al final se aclara
+let usoSinPais = false;
+function horaAlarma(r) {
+  const z = zonaDeAlarma(r);
+  if (z === 'Europe/Madrid') usoSinPais = true;
+  const h = new Intl.DateTimeFormat('es-ES', { timeZone: z, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(r.recordar_en));
+  return z === 'Europe/Madrid' ? h : `${h} (${limpiar(r.lugar_alarma || z)})`;
+}
+// Las citas también: a su hora y en su zona, con el sitio al final si no es Madrid
+const diaEnZona = (r, iso) => diaAlarma({ ...r, recordar_en: iso });
+const horaEnZona = (r, iso) => {
+  if (zonaDeAlarma(r) === 'Europe/Madrid') usoSinPais = true;
+  return new Intl.DateTimeFormat('es-ES', { timeZone: zonaDeAlarma(r), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+};
+const sitioDe = (r) => (zonaDeAlarma(r) === 'Europe/Madrid' ? '' : ` (${limpiar(r.lugar_alarma || zonaDeAlarma(r))})`);
+const claveDiaEn = (zona, fecha) => new Intl.DateTimeFormat('en-CA', { timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit' }).format(fecha);
 
 // "Huevos, leche, café": en una lista de la compra, solo la primera en mayúscula (salvo siglas)
 const minuscula1 = (s) => (s.length > 1 && s[0] === s[0].toUpperCase() && s[1] === s[1].toLowerCase() ? s[0].toLowerCase() + s.slice(1) : s);
@@ -154,13 +208,15 @@ function formatearLista(filas, consulta, ahora, archivos = []) {
   const resto = cotidiano;
   const tareas = resto.filter((r) => r.tipo === 'tarea').sort(porFecha('fecha_limite'));
   const eventos = resto.filter((r) => r.tipo === 'evento').sort(porFecha('fecha_inicio'));
-  const notas = resto.filter((r) => r.tipo === 'nota');
+  // Las notas ligadas a una carpeta de Drive van en su apartado «Notas», una cabecera por carpeta; las sueltas, en Pensamientos
+  const notasCarpeta = resto.filter((r) => r.tipo === 'nota' && typeof r.carpeta === 'string' && r.carpeta !== '');
+  const notas = resto.filter((r) => r.tipo === 'nota' && !notasCarpeta.includes(r));
   const listas = resto.filter((r) => r.tipo === 'lista');
 
   const bloques = [];
 
   if (alarmas.length) {
-    bloques.push(`*Alarmas*\n${alarmas.map((r) => `• 🔔 ${limpiar(r.titulo)}, ${dia(r.recordar_en)}, ${hora(r.recordar_en)}${dePro(r)}${detalle(r, largo, marcas)}`).join('\n')}`);
+    bloques.push(`*Alarmas*\n${alarmas.map((r) => `• 🔔 ${limpiar(r.titulo)}, ${diaAlarma(r)}, ${horaAlarma(r)}${dePro(r)}${detalle(r, largo, marcas)}`).join('\n')}`);
   }
 
   if (tareas.length) {
@@ -179,10 +235,19 @@ function formatearLista(filas, consulta, ahora, archivos = []) {
 
   if (eventos.length) {
     const lineas = eventos.map((r) => {
-      const cuando = r.fecha_inicio ? `, ${dia(r.fecha_inicio)}, ${hora(r.fecha_inicio)}` : '';
+      const cuando = r.fecha_inicio ? `, ${diaEnZona(r, r.fecha_inicio)}, ${horaEnZona(r, r.fecha_inicio)}${sitioDe(r)}` : '';
       return `• ${limpiar(r.titulo)}${cuando}${dePro(r)}${detalle(r, largo, marcas)}`;
     });
     bloques.push(`*Citas*\n${lineas.join('\n')}`);
+  }
+
+  if (notasCarpeta.length) {
+    const grupos = agrupar(notasCarpeta, (r) => r.carpeta);
+    const rutas = [...grupos.keys()].sort((a, b) => a.split('/').at(-1).localeCompare(b.split('/').at(-1), 'es') || a.localeCompare(b, 'es'));
+    // El nombre de la carpeta (su último tramo); la ruta entera solo si dos se llaman igual
+    const repetido = (r) => rutas.filter((x) => x.split('/').at(-1).toLowerCase() === r.split('/').at(-1).toLowerCase()).length > 1;
+    const partes = rutas.map((r) => `📂 *${limpiar(repetido(r) ? r : r.split('/').at(-1))}*\n${grupos.get(r).map((n) => `• ${limpiar(n.titulo)}${detalle(n, largo, marcas)}`).join('\n')}`);
+    bloques.push(`*Notas*\n${partes.join('\n')}`);
   }
 
   if (notas.length) {
@@ -431,6 +496,7 @@ function filtrarArchivos(filas, filtro) {
     .map((f) => ({ ...f, ruta: rutaDeArchivo(f) }))
     .filter((f) => {
       if (objetivo && !(sinTildes(f.ruta) === objetivo || sinTildes(f.ruta).startsWith(`${objetivo}/`))) return false;
+      if (f0.tipo === 'pdf' && !(String(f.tipo_mime ?? '') === 'application/pdf' || /\.pdf$/i.test(f.nombre))) return false;
       if (f0.tipo === 'imagen' && !String(f.tipo_mime ?? '').startsWith('image/')) return false;
       if (f0.tipo === 'documento' && String(f.tipo_mime ?? '').startsWith('image/')) return false;
       if (f0.solo_pendientes && f.estado !== 'pendiente') return false;
@@ -439,13 +505,32 @@ function filtrarArchivos(filas, filtro) {
   return { archivos, hayFiltro: Boolean(objetivo || f0.tipo || f0.solo_pendientes) };
 }
 
+// Los archivos de la foto del árbol de Drive que la secretaria no tiene registrados (subidos a mano), con la forma de una fila de
+// «archivos»: su carpeta es la de la ruta y el tipo se deduce de la extensión (la foto no lo guarda). Los registrados ya vienen en «lecturas».
+const MIME_POR_EXTENSION = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', heif: 'image/heif', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf' };
+function juntarConFoto(registrados, foto) {
+  const filas = (Array.isArray(registrados) ? registrados : []).filter((f) => f && typeof f.nombre === 'string');
+  const conocidos = new Set(filas.map((f) => f.drive_file_id).filter(Boolean));
+  const manuales = (Array.isArray(foto) ? foto : [])
+    .filter((r) => r && typeof r.drive_id === 'string' && ID_DRIVE.test(r.drive_id) && typeof r.nombre === 'string' && typeof r.ruta === 'string' && !conocidos.has(r.drive_id))
+    .map((r) => {
+      const corte = r.ruta.lastIndexOf('/');
+      const ext = (/\.([A-Za-z0-9]{1,5})$/.exec(r.nombre)?.[1] ?? '').toLowerCase();
+      return { nombre: r.nombre, drive_file_id: r.drive_id, drive_url: `https://drive.google.com/file/d/${r.drive_id}/view`, created_at: r.created_at ?? null, tipo_mime: MIME_POR_EXTENSION[ext] ?? '', carpeta_destino: corte > 0 ? r.ruta.slice(0, corte) : 'Secretaria', estado: 'manual', items: null };
+    });
+  return [...filas, ...manuales].sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+}
+
 const TEXTO_SIN_ARCHIVOS = (hayFiltro) =>
   hayFiltro ? 'No tengo archivos con esos criterios.' : 'Todavía no has guardado ningún archivo.';
 
 // --- Mandar los archivos por WhatsApp (ver_archivos con enviar: true) ---
 // Se mandan como máximo MAX_ARCHIVOS_ENVIO (20), los más recientes que encajen, agrupados por carpeta. Aquí solo se decide CUÁLES y qué decir: el flujo de WhatsApp
 // los baja de Drive y los sube a Meta (comprobando tipo y tamaño de cada uno; si no se pueden mandar, manda el enlace).
-const MAX_ARCHIVOS_ENVIO = 20;
+// «todos los archivos de X» son todos. Se mandan los MAX_ARCHIVOS_ENVIO más recientes y, del resto, el enlace de Drive de cada uno
+// (hasta MAX_ENLACES_RESTO): mandar cientos de archivos por WhatsApp tardaría minutos y bloquearía la respuesta siguiente.
+const MAX_ARCHIVOS_ENVIO = 30;
+const MAX_ENLACES_RESTO = 60;
 const ID_DRIVE = /^[A-Za-z0-9_-]{10,100}$/;
 
 function archivosParaEnviar(filas, filtro) {
@@ -463,12 +548,20 @@ function archivosParaEnviar(filas, filtro) {
   const de = rutas.length > 1 ? ` de ${rutas.length} carpetas` : '';
   const intro =
     enviables.length > elegidos.length
-      ? `Hay ${enviables.length} archivos. Te mando los ${elegidos.length} más recientes${de}:`
+      ? `Hay ${enviables.length} archivos. Te mando los ${elegidos.length} más recientes${de}; de los demás tienes aquí el enlace de Drive.`
       : elegidos.length === 1
         ? 'Aquí tienes el archivo:'
         : `Te mando ${elegidos.length} archivos${de}:`;
+  // El resto, con su enlace (agrupado por carpeta), para que «todos» sean todos
+  const resto = enviables.slice(MAX_ARCHIVOS_ENVIO);
+  const enlaces = resto.slice(0, MAX_ENLACES_RESTO);
+  const rutasResto = [...new Set(enlaces.map((f) => f.ruta))].sort((a, b) => a.localeCompare(b, 'es'));
+  const textoResto = resto.length === 0
+    ? ''
+    : `Los otros ${resto.length}:\n${rutasResto.map((ruta) => `*${limpiar(ruta)}*\n${enlaces.filter((f) => f.ruta === ruta).map((f) => `• ${limpiar(f.nombre)}: ${f.drive_url || `https://drive.google.com/file/d/${f.drive_file_id}/view`}`).join('\n')}`).join('\n')}${resto.length > enlaces.length ? `\n… y ${resto.length - enlaces.length} más (míralos en Drive).` : ''}`;
   return {
     mensajes: [intro],
+    resto: textoResto,
     envios: elegidos.map((f) => ({ drive_file_id: f.drive_file_id, nombre: f.nombre, tipo_mime: typeof f.tipo_mime === 'string' ? f.tipo_mime : '', ruta: f.ruta })),
   };
 }
@@ -522,8 +615,9 @@ function textoGuardado(filas) {
 // Horario de los eventos que se acaban de guardar. La duración por defecto (una hora) ya se da por conocida: no se avisa.
 function textoHorario(eventos) {
   if (!Array.isArray(eventos) || eventos.length === 0) return '';
-  const partes = eventos.map((e) => `${limpiar(e.titulo)}, ${dia(e.inicio)}, de ${hora(e.inicio)} a ${hora(e.fin)}`);
-  return `Horario: ${partes.join('; ')}.`;
+  const partes = eventos.map((e) => `${limpiar(e.titulo)}, ${diaEnZona(e, e.inicio)}, de ${horaEnZona(e, e.inicio)} a ${horaEnZona(e, e.fin)}${sitioDe(e)}`);
+  // «📅 Cita: …» (antes «Horario: …», que confundía con el horario fijo)
+  return `📅 ${eventos.length > 1 ? 'Citas' : 'Cita'}: ${partes.join('; ')}.`;
 }
 
 // Recordatorios cortos recién guardados (tareas con hora de aviso). Se dice cuándo se avisará y con qué antelación: el sistema avisa 1 hora
@@ -533,15 +627,18 @@ const AVISOS_RECORDATORIO_MIN = [60, 30, 0];
 const TEXTO_ANTELACION = { 60: '1 hora antes', 30: '30 minutos antes', 0: 'a la hora' };
 function textoRecordatorios(recordatorios, pasados, ahora) {
   const lineas = [];
-  const hoyClave = claveDia(ahora.toISOString());
-  // «Mañana» por calendario, no sumando 24 h: el domingo del cambio de hora (25 de octubre) dura 25 horas y el de marzo, 23
-  const [yH, mH, dH] = hoyClave.split('-').map(Number);
-  const mananaClave = new Date(Date.UTC(yH, mH - 1, dH + 1)).toISOString().slice(0, 10);
   for (const r of Array.isArray(recordatorios) ? recordatorios : []) {
     const inicio = Date.parse(r.recordar_en);
     if (Number.isNaN(inicio)) continue;
-    const cuando = claveDia(r.recordar_en) === hoyClave ? 'hoy' : claveDia(r.recordar_en) === mananaClave ? 'mañana' : dia(r.recordar_en);
-    lineas.push(`🔔 ${limpiar(r.titulo)}: ${cuando} a las ${hora(r.recordar_en)}.`);
+    // «Hoy» y «mañana» en la zona de la alarma, y «mañana» por calendario, no sumando 24 h: el domingo del cambio de hora
+    // (25 de octubre) dura 25 horas y el de marzo, 23
+    const z = zonaDeAlarma(r);
+    const hoyClave = claveDiaEn(z, ahora);
+    const [yH, mH, dH] = hoyClave.split('-').map(Number);
+    const mananaClave = new Date(Date.UTC(yH, mH - 1, dH + 1)).toISOString().slice(0, 10);
+    const suDia = claveDiaEn(z, new Date(r.recordar_en));
+    const cuando = suDia === hoyClave ? 'hoy' : suDia === mananaClave ? 'mañana' : diaAlarma(r);
+    lineas.push(`🔔 ${limpiar(r.titulo)}: ${cuando} a las ${horaAlarma(r)}.`);
   }
   for (const t of Array.isArray(pasados) ? pasados : []) lineas.push(`⚠️ La hora de «${limpiar(t)}» ya ha pasado: lo he guardado como tarea, sin aviso.`);
   return lineas.join('\n');
@@ -553,10 +650,10 @@ function textoHoraMovida(filas, ahora) {
   const lineas = [];
   for (const r of Array.isArray(filas) ? filas : []) {
     if (r.tipo === 'tarea' && typeof r.recordar_en === 'string' && !Number.isNaN(Date.parse(r.recordar_en))) {
-      lineas.push(`Alarma cambiada.\n${textoRecordatorios([{ titulo: r.titulo, recordar_en: r.recordar_en }], [], ahora)}`);
+      lineas.push(`Alarma cambiada.\n${textoRecordatorios([{ titulo: r.titulo, recordar_en: r.recordar_en, zona_alarma: r.zona_alarma, lugar_alarma: r.lugar_alarma }], [], ahora)}`);
     } else if (r.tipo === 'evento' && typeof r.fecha_inicio === 'string' && !Number.isNaN(Date.parse(r.fecha_inicio))) {
-      const fin = typeof r.fecha_fin === 'string' && !Number.isNaN(Date.parse(r.fecha_fin)) ? ` a ${hora(r.fecha_fin)}` : '';
-      lineas.push(`📅 Cita «${limpiar(r.titulo)}» cambiada: ${dia(r.fecha_inicio)}, ${fin ? 'de' : 'a las'} ${hora(r.fecha_inicio)}${fin}.`);
+      const fin = typeof r.fecha_fin === 'string' && !Number.isNaN(Date.parse(r.fecha_fin)) ? ` a ${horaEnZona(r, r.fecha_fin)}` : '';
+      lineas.push(`📅 Cita «${limpiar(r.titulo)}» cambiada: ${diaEnZona(r, r.fecha_inicio)}, ${fin ? 'de' : 'a las'} ${horaEnZona(r, r.fecha_inicio)}${fin}${sitioDe(r)}.`);
     }
   }
   return lineas.join('\n');
@@ -582,10 +679,10 @@ function textoConversion(a, filas, ahora) {
     const titulo = limpiar(r.titulo);
     const pendiente = r.estado === undefined || r.estado === 'pendiente';
     if (a === 'alarma' && r.tipo === 'tarea' && r.recordar_en && !r.fecha_limite && pendiente) {
-      lineas.push(`Hecho: «${titulo}» ahora es ${ARTICULO_TIPO[a]}.\n${textoRecordatorios([{ titulo: r.titulo, recordar_en: r.recordar_en }], [], ahora)}`);
+      lineas.push(`Hecho: «${titulo}» ahora es ${ARTICULO_TIPO[a]}.\n${textoRecordatorios([{ titulo: r.titulo, recordar_en: r.recordar_en, zona_alarma: r.zona_alarma, lugar_alarma: r.lugar_alarma }], [], ahora)}`);
     } else if (a === 'cita' && r.tipo === 'evento' && r.fecha_inicio && pendiente) {
-      const fin = typeof r.fecha_fin === 'string' && !Number.isNaN(Date.parse(r.fecha_fin)) ? ` a ${hora(r.fecha_fin)}` : '';
-      lineas.push(`📅 «${titulo}» ahora es ${ARTICULO_TIPO[a]}: ${dia(r.fecha_inicio)}, ${fin ? 'de' : 'a las'} ${hora(r.fecha_inicio)}${fin}.`);
+      const fin = typeof r.fecha_fin === 'string' && !Number.isNaN(Date.parse(r.fecha_fin)) ? ` a ${horaEnZona(r, r.fecha_fin)}` : '';
+      lineas.push(`📅 «${titulo}» ahora es ${ARTICULO_TIPO[a]}: ${diaEnZona(r, r.fecha_inicio)}, ${fin ? 'de' : 'a las'} ${horaEnZona(r, r.fecha_inicio)}${fin}${sitioDe(r)}.`);
     } else if (a === 'tarea' && r.tipo === 'tarea' && !r.recordar_en && pendiente) {
       lineas.push(`✅ «${titulo}» ahora es ${ARTICULO_TIPO[a]}${r.fecha_limite ? ` (para ${dia(r.fecha_limite)})` : ''}.`);
     } else fallidas.push(titulo);
@@ -666,7 +763,7 @@ function partir(bloques, limite = LIMITE_MENSAJE) {
   return mensajes;
 }
 
-function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = '', archivosPendientes = [], proyectos = [], mensaje = '', drive = {}, etiquetas = [] }) {
+function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = '', archivosPendientes = [], proyectos = [], mensaje = '', drive = {}, etiquetas = [], foto = [] }) {
   const MENSAJE_FALLO = textoFallo(mensaje); // sombrea al de arriba: dice qué mensaje falló
   // Pedir que se vacíe una carpeta es un extra (base de datos 1.5): si falla (por ejemplo, sin actualizar la base de datos a la 1.5), lo demás sigue bien y no se avisa de un fallo
   // (también anular un vaciado al deshacer un movimiento)
@@ -763,12 +860,15 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
       falloFlujo = true;
       mensajes = [MENSAJE_FALLO];
     } else {
+      const conManuales = juntarConFoto(lecturas, foto);
       if (meta.consulta_archivos?.enviar === true) {
-        const r = archivosParaEnviar(lecturas, meta.consulta_archivos);
+        const r = archivosParaEnviar(conManuales, meta.consulta_archivos);
         mensajes = partir(r.mensajes);
         envios = r.envios;
+        // Los enlaces del resto van justo después de esta frase (el flujo de WhatsApp manda los textos y después los archivos)
+        if (r.resto) mensajes.push(...partir([r.resto]));
       } else {
-        mensajes = partir(formatearArchivos(lecturas, meta.consulta_archivos));
+        mensajes = partir(formatearArchivos(conManuales, meta.consulta_archivos));
       }
     }
   } else if (meta.intencion === 'horario' && !meta.respuesta_fija) {
@@ -931,6 +1031,12 @@ function resolver({ meta, escrituras, lecturas, ahora, niveles = [], raizId = ''
       ? { hilo: [{ rol: 'user', texto: String(mensaje || '(archivos)').slice(0, 500) }, { rol: 'model', texto: JSON.stringify(nota) }] }
       : null);
 
+  // Viajes: tras elegir la hora de España o la del país, una línea con las dos horas
+  const conNotaZona = typeof meta.nota_zona === 'string' && meta.nota_zona !== '' && error === null && ['guardar', 'corregir', 'archivar'].includes(meta.intencion) && mensajes.length > 0;
+  if (conNotaZona) mensajes[mensajes.length - 1] += `\n${meta.nota_zona}`;
+  // (ya no hay línea «🕒 Citas en hora de …»: cada alarma y cada cita lleva su sitio entre paréntesis si no es de Madrid)
+  // estando fuera, si salió alguna alarma o cita sin país, se aclara que esa va en hora de España
+  else if (ZONA_TEXTO !== 'Europe/Madrid' && usoSinPais && mensajes.length > 0) mensajes[mensajes.length - 1] += '\n(Lo que no lleva país va en hora de España.)';
   // Preguntas que el usuario dejó sin contestar al escribir otra cosa: se cerraron sin hacer nada y se le dice ANTES de la respuesta
   const ignoradas = Array.isArray(meta.preguntas_ignoradas) ? meta.preguntas_ignoradas.filter((p) => typeof p === 'string' && p.trim() !== '') : [];
   if (ignoradas.length > 0) mensajes.unshift(textoPreguntasIgnoradas(ignoradas));
@@ -1006,6 +1112,8 @@ const salida = resolver({
   escrituras: $('Escribir en Supabase').all().map((i) => i.json),
   // Qué era cada escritura (mismo orden): para no tomar por un fallo el de un extra
   etiquetas: $('Planificar').all().map((i) => i.json.etiqueta),
+  // Los archivos de la foto del árbol de Drive (solo con «ver archivos»); con las demás intenciones, nada
+  foto: meta.consulta_drive_url ? todos('Leer archivos de Drive').filter((r) => r && typeof r.drive_id === 'string') : [],
   // Con la rama de carpetas, lo que llega es lo de Drive (Revisar Drive, Marcar borrado): los archivos contados se leen de su nodo
   lecturas: meta.carpetas ? todos('Contar archivos') : $input.all().map((i) => i.json),
   drive: { revisados: todos('Revisar Drive'), mandados: todos('Mandar a la papelera'), marcado: nivel('Marcar borrado'), creado: nivel('Crear en Drive'), preparados: todos('Preparar movimientos'), movidos: todos('Mover en Drive'), anotados: todos('Anotar movimiento') },

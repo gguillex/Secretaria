@@ -8,11 +8,20 @@
 
 const config = $('Configuración').first().json.config;
 const LIMITE_MENSAJE = 3800;
-const ZONA = 'Europe/Madrid';
+const ZONA_ESPANA = 'Europe/Madrid';
 
 const limpiar = (s) => String(s ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim();
-const fmtHora = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const hora = (iso) => fmtHora.format(new Date(iso));
+// Cada cita, a su hora y en su zona: las de Madrid sin más («10:00») y las demás con el sitio («09:00 (Portugal)»), estés donde
+// estés. La zona viene de items.zona_alarma (base de datos al día); sin ella, o si no se reconoce, Madrid
+const horaDe = (e) => {
+  const z = typeof e.zona_alarma === 'string' && e.zona_alarma !== '' ? e.zona_alarma : ZONA_ESPANA;
+  try {
+    const h = new Intl.DateTimeFormat('es-ES', { timeZone: z, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(e.fecha_inicio));
+    return z === ZONA_ESPANA ? h : `${h} ${limpiar(e.lugar_alarma || z)}`;
+  } catch (err) {
+    return new Intl.DateTimeFormat('es-ES', { timeZone: ZONA_ESPANA, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(e.fecha_inicio));
+  }
+};
 
 function faltan(inicioMs, ahoraMs) {
   const min = Math.max(1, Math.ceil((inicioMs - ahoraMs) / 60000));
@@ -37,11 +46,12 @@ if (!ventanaAbierta) return [];
 const para = String($env.WHATSAPP_NUMERO_PERMITIDO ?? '').replace(/\D/g, '');
 if (!para) throw new Error('Redactar aviso: falta WHATSAPP_NUMERO_PERMITIDO en el entorno de n8n');
 
-const linea = (e) => `${hora(e.fecha_inicio)} ${limpiar(e.titulo)} (${faltan(Date.parse(e.fecha_inicio), ahora.getTime())})`;
+const linea = (e) => `${horaDe(e)} ${limpiar(e.titulo)} (${faltan(Date.parse(e.fecha_inicio), ahora.getTime())})`;
+// «empieza a las 09:00 Portugal (en 30 min)»: como en el aviso de las alarmas («(19:00 Portugal)»), el sitio va pegado a la hora
 let texto;
 if (eventos.length === 1) {
   const e = eventos[0];
-  texto = `⏰ *${limpiar(e.titulo)}* empieza a las ${hora(e.fecha_inicio)} (${faltan(Date.parse(e.fecha_inicio), ahora.getTime())}).`;
+  texto = `⏰ *${limpiar(e.titulo)}* empieza a las ${horaDe(e)} (${faltan(Date.parse(e.fecha_inicio), ahora.getTime())}).`;
 } else {
   texto = `⏰ *Estos eventos van a empezar*\n${eventos.map((e) => `• ${linea(e)}`).join('\n')}`;
 }

@@ -57,6 +57,7 @@ ni `authenticated`: solo la clave secreta (`service_role`) que usa n8n puede lee
 | `drive_arbol`, `registro_drive`, `vigilantes_estado`, `registro_calendar` | Estado y registro de los vigilantes. |
 | `avisos_enviados` | Qué alarmas y citas iban en cada aviso enviado (para entender las respuestas a un aviso). |
 | `turno` | Fila única: quién está procesando la cola de mensajes. |
+| `viajes` | Dónde está el usuario cuando viaja: tramos con país, zona horaria, primer y último día. Hasta 10 vigentes (el actual y los próximos). |
 | `turnos` | Turnos con caducidad (hoy, el de «Sincronizar Drive»). |
 | `carpetas_vaciar`, `carpetas_creadas` | Carpetas que se mandarán a la papelera al quedarse vacías, y las que acaba de crear «Sincronizar Drive». |
 | `llegadas` | Orden de llegada de todos los mensajes (de cualquier tipo), para contestarlos en ese orden. Se vacía sola (2 días). |
@@ -140,6 +141,8 @@ suyo. Un mensaje que no llegó a guardarse deja de hacer esperar al cabo de 1 mi
 - **Memoria de la conversación:** el modelo recibe los últimos mensajes del usuario (hasta `MEMORIA_MENSAJES`, de los últimos
   `MEMORIA_MIN` minutos) con lo que se le contestó. Sirve para entender una corrección («no, quiero que…»). Más mensajes son más texto
   para Gemini; `MEMORIA_MENSAJES = 0` la apaga. No está medida con la evaluación.
+- **DNS:** `docker-compose.yml` da a n8n tres DNS públicos (1.1.1.1, 9.9.9.9 y 8.8.8.8): si los del proveedor del servidor fallan unos
+  minutos, Docker pregunta al siguiente. Los cortes de DNS y de conexión no avisan hasta que duran 30 minutos.
 - **Mover carpetas:** «mete la carpeta Viajes dentro de Fotos» (por texto o por voz, una o varias a la vez, creando el destino si no
   existe) se reconoce por código. «Revisar Drive» busca las carpetas en el árbol real y decide qué se puede mover (no `Entrada` ni
   `Notas`, ni una dentro de sí misma, ni a más de 3 niveles, ni si en el destino ya hay otra con ese nombre); la secretaria mueve la
@@ -158,6 +161,16 @@ suyo. Un mensaje que no llegó a guardarse deja de hacer esperar al cabo de 1 mi
 - **Dos peticiones en un mensaje:** un mensaje suelto que trae órdenes claras de al menos dos clases distintas («apunta comprar pan y
   dime qué tengo hoy») se parte por código en el flujo de WhatsApp; cada parte se procesa aparte, en orden, con su respuesta. El modelo
   sabe qué se pidió antes en el mismo mensaje. No parte listas con viñetas, mensajes muy largos ni trozos que no empiezan por una orden.
+- **Viajes y zona horaria:** el usuario dice dónde está por escrito (una tabla de países y ciudades da la zona; un país con varias horas
+  pide la ciudad; lo que no está en la tabla no se toma como viaje). No se usa la ubicación de WhatsApp. `viajes_vigentes()` da el tramo
+  actual (el que ya empezó) y los próximos; al acabar un tramo pasa al siguiente. Cada alarma y cita guarda su zona (`items.zona_alarma`,
+  `items.lugar_alarma`) y se escribe a su hora, con el país entre paréntesis si no es Madrid. Lo guardado y los cálculos (días ocupados,
+  horario fijo, rangos de «qué tengo hoy») siguen en hora de Madrid, y **nada se mueve solo** al cambiar de sitio. Una hora dicha
+  estando fuera, o con un sitio nombrado («el vuelo en Lisboa»), se entiende en la hora de allí sin preguntar salvo que el sitio sea
+  dudoso; una hora que cae en otro tramo pregunta. Un viaje nunca se apunta como cita. Todo por código.
+- **Notas en carpetas de Drive:** «ponme en Budapest que…» (o una nota que nombra una carpeta propia) se guarda como nota ligada a esa
+  carpeta (`items.carpeta`); sin una carpeta con ese nombre, se guarda como nota normal y se dice. «Dame todo» las agrupa por carpeta.
+- **Abreviaturas de chat** («ns», «q», «xq», «tb», «mñn»…): todo lo que resuelve el código sin el modelo las entiende.
 - **Deshacer:** quitar o completar anota cuándo (`items.quitado_en`). «Deshaz» recupera el último lote quitado (lo de la última orden,
   hasta 24 horas atrás) y «recupera la tarea del banco» lo que encaje con esas palabras; si el elemento era de un proyecto cerrado,
   lo reabre. Sin modelo.
@@ -186,6 +199,10 @@ suyo. Un mensaje que no llegó a guardarse deja de hacer esperar al cabo de 1 mi
 - Gemini en plan de pago: Google no usa lo enviado para mejorar sus productos.
 
 ## Límites conocidos
+
+- **Viajes:** solo se sabe dónde estás si lo dices; un sitio que no está en la tabla no se detecta y un nombre que coincide con uno
+  («restaurante Roma») puede preguntar de más. «Hoy» y «mañana» los entiende el modelo en fecha de España (en Japón de madrugada puede ser
+  otro día), y el resumen sale siempre a las 7:00 de Madrid. Las horas de salida o llegada de un viaje no se guardan: solo los días.
 
 - **Ventana de 24 horas de Meta:** sin plantillas aprobadas, solo se puede escribir a quien te escribió en las últimas 24 horas. Si un
   día no escribes a la secretaria, el resumen, los recordatorios y los avisos de ese día esperan (el monitor externo sí avisa por correo

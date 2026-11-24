@@ -150,9 +150,12 @@ const textoNoSoportado = (tipo) =>
 const MENSAJE_EXCESO_MENSAJES = (n) => `Me has mandado ${n} mensajes de golpe y no puedo con tantos (máximo ${MAX_MENSAJES_DE_GOLPE}). No he hecho nada: mándalos en tandas más pequeñas.`;
 const MENSAJE_EXCESO_ADJUNTOS = (n) => `Solo guardo ${MAX_ADJUNTOS_DE_GOLPE} archivos de golpe. He guardado los primeros ${MAX_ADJUNTOS_DE_GOLPE}; ${n === 1 ? 'el otro no' : `los otros ${n} no`}: mánda${n === 1 ? 'lo' : 'los'} aparte.`;
 const MENSAJE_EXCESO_COLA = (n) => `Me has mandado ${n} mensajes seguidos y no puedo con tantos (máximo ${MAX_MENSAJES_DE_GOLPE}). No he hecho nada: mándalos en tandas más pequeñas.`;
+const MENSAJE_UBICACION = 'No miro las ubicaciones. ¿Dónde estás? Dímelo escrito, por ejemplo «estoy en Portugal» o «estoy en Nueva York hasta el domingo», y pondré tus alarmas y citas a la hora de allí si quieres.';
 const MENSAJE_NO_SOPORTADO = (tipo, cantidad = 0) =>
   tipo === 'exceso_mensajes' ? MENSAJE_EXCESO_MENSAJES(cantidad)
     : tipo === 'exceso_adjuntos' ? MENSAJE_EXCESO_ADJUNTOS(cantidad)
+      // Una ubicación no se mira (decisión del usuario: sus coordenadas no van a ningún servicio de fuera): se le pregunta dónde está
+      : tipo === 'location' ? MENSAJE_UBICACION
       : `Eso todavía no lo entiendo (${textoNoSoportado(tipo)}). Mándame texto, un audio, una foto o un documento.`;
 const MENSAJE_FALLO_CANAL = 'No he podido procesar ese mensaje. Inténtalo de nuevo en un momento.';
 // Con el texto que falló (los mensajes seguidos juntados, uno por línea), dice cuál fue: «compra leche y pan para…»
@@ -344,7 +347,7 @@ function leerTranscripcion(resp) {
 // archivo a archivo, si se puede mandar de verdad (tipo y tamaño que admite Meta) o si se manda su enlace de Drive.
 
 const ID_DRIVE_ENVIO = /^[A-Za-z0-9_-]{10,100}$/;
-const MAX_ENVIOS_ARCHIVOS = 20; // el flujo principal ya recorta a 20; aquí se vuelve a comprobar
+const MAX_ENVIOS_ARCHIVOS = 30; // el flujo principal ya recorta a 30; aquí se vuelve a comprobar
 const MAX_IMAGEN_MB = 5; // límite de Meta para imágenes (documentación: JPEG y PNG, 5 MB)
 const MAX_DOCUMENTO_MB = 100; // límite de Meta para documentos
 

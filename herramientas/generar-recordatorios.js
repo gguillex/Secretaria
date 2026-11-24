@@ -73,7 +73,7 @@ function construirFlujoBase() {
       [PASO * 2, 0],
       {
         method: 'GET',
-        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,titulo,estado,recordar_en,recordatorio_avisos,updated_at&tipo=eq.tarea&estado=eq.pendiente&recordar_en=lte.{{ new Date(Date.now() + Math.max(...${CFG}.avisos_min) * 60000).toISOString() }}&order=recordar_en.asc&limit=50`,
+        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,titulo,estado,recordar_en,zona_alarma,lugar_alarma,recordatorio_avisos,updated_at&tipo=eq.tarea&estado=eq.pendiente&recordar_en=lte.{{ new Date(Date.now() + Math.max(...${CFG}.avisos_min) * 60000).toISOString() }}&order=recordar_en.asc&limit=50`,
         ...supabase,
       },
       { executeOnce: true, alwaysOutputData: true },
@@ -148,7 +148,7 @@ function construirFlujoBase() {
       PASO * 3,
       320,
       2,
-      '## Antes de publicar\n1. Base de datos instalada en Supabase (`supabase/instalar.sql`).\n2. Credencial **Supabase API** en *Leer recordatorios*, *Leer último mensaje*, *Marcar avisados* y *Guardar aviso enviado*, y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n3. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n4. Pruébalo con *Disparador manual* (sin recordatorios a punto termina sin hacer nada) y publica el flujo.\n5. Elige «Secretaria · Aviso de fallos» como Error workflow.',
+      '## Antes de publicar\n1. Base de datos instalada y al día en Supabase (`supabase/instalar.sql`; la zona de cada alarma la lee *Leer recordatorios*: sin ella falla).\n2. Credencial **Supabase API** en *Leer recordatorios*, *Leer último mensaje*, *Marcar avisados* y *Guardar aviso enviado*, y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n3. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n4. Pruébalo con *Disparador manual* (sin recordatorios a punto termina sin hacer nada) y publica el flujo.\n5. Elige «Secretaria · Aviso de fallos» como Error workflow.',
     ),
   ];
 

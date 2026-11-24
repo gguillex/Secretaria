@@ -2,6 +2,46 @@
 
 Formato: cada versión dice qué cambia para quien la usa y qué hay que hacer para actualizar una instalación existente.
 
+## 1.7.0 · 2026-11-24
+
+### Novedades
+
+- **Viajes y zona horaria:** dices dónde estás por escrito («estoy en Portugal», «me voy a Nueva York hasta el domingo», «he vuelto», «¿dónde
+  estoy?», `/viaje`) y, estando fuera, las alarmas y citas con hora van a la hora de allí, con el país entre paréntesis si no es Madrid
+  («19:00 (Portugal)»). Nada se mueve solo al cambiar de sitio. No usa tu ubicación.
+- **Viajes planeados y por tramos:** «el 20 me voy a Japón hasta el 30», «me quedo hasta dentro de 5 días y luego me voy a México». Al acabar
+  un tramo pasa al siguiente. Te dice qué tienes apuntado esos días, `/viajes` los lista, «cancela el viaje a Japón» o «el viaje a Japón es del
+  21 al 28» los cambian, y el resumen de las 7:00 avisa el día antes («✈️ Mañana te vas a …»). Un viaje nunca se apunta como cita.
+- **Notas en carpetas de Drive:** «ponme en Budapest que el hotel es el Hilton» guarda una nota ligada a esa carpeta (una nota que nombra
+  una carpeta tuya va a ella), y «dame todo» las enseña agrupadas por carpeta.
+- **«Dame todos los archivos de la carpeta X»** manda todo lo que hay en Drive, también lo que subiste a mano (los 30 más recientes y, del
+  resto, el enlace); se acota con el tipo («los pdf», «las fotos»).
+- **Abreviaturas de chat** («ns», «q», «xq», «tb», «mñn»…) en todo lo que el código resuelve sin el modelo.
+
+### Cambios
+
+- «Crea la carpeta Recetas» (o «… dentro de Fotos») se resuelve por código y sin preguntar; archivar con una sola carpeta parecida va directo y
+  lo dice.
+- Las citas se confirman con «📅 Cita: …» (antes «Horario: …», que se confundía con el horario fijo), y una cita de 12 horas o más
+  pregunta en vez de bloquear.
+- **Menos avisos falsos:** los cortes de DNS y de conexión no avisan hasta que duran 30 minutos, y n8n usa tres DNS públicos (`docker-compose.yml`).
+- Al mandar archivos por WhatsApp, el tope por petición pasa de 20 a 30.
+- Más rápido: al modelo le llega el hilo de la conversación sin los datos internos del código (sin medir).
+
+### Para actualizar desde la 1.5 o la 1.6
+
+**La base de datos cambia** (una tabla, siete funciones y tres columnas), así que el orden importa:
+
+1. Haz una copia de n8n (parte 15 del manual).
+2. En el SQL Editor de Supabase, ejecuta [`supabase/actualizar-1.7.sql`](supabase/actualizar-1.7.sql) **una vez**. Después, ejecuta
+   `supabase/comprobar-instalacion.sql` (10 filas con `ok = true`) y `supabase/consultas/ver-version.sql` (debe decir 1.7).
+3. En el servidor: `git pull`, `docker compose up -d` (aplica los DNS nuevos; reinicia n8n unos segundos), `bash herramientas/servidor/importar-flujos.sh`
+   y vuelve a publicar los flujos (parte 11.5 del manual). La base de datos va **antes** que los flujos: **sin el paso 2 fallan** la lectura de
+   viajes y de la zona de las alarmas en el flujo principal, los recordatorios, los avisos de citas y el resumen.
+
+Si vienes de la 1.4 o anterior, ejecuta antes, en orden, los `actualizar-1.X.sql` que te falten (`ver-version.sql` te dice cuál tienes).
+Las instalaciones nuevas usan `supabase/instalar.sql`, que ya incluye todo.
+
 ## 1.6.0 · 2026-11-05
 
 ### Novedades

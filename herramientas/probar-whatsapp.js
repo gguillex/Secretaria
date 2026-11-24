@@ -221,6 +221,8 @@ async function main() {
     const ns = await p([{ wa_message_id: 'w', tipo_entrada: 'no_soportado', tipo: 'image' }]);
     afirmar('tipo no soportado: respuesta honesta sin pasar por el modelo', ns.length === 1 && ns[0].texto.includes('todavía no lo entiendo') && ns[0].texto.includes('una imagen'));
     afirmar('un audio se nombra como audio', (await p([{ tipo_entrada: 'no_soportado', tipo: 'audio' }]))[0].texto.includes('un audio'));
+    const ub = await p([{ wa_message_id: 'w', tipo_entrada: 'no_soportado', tipo: 'location' }]);
+    afirmar('una ubicación no se mira: se pregunta dónde está y cómo decirlo', ub.length === 1 && ub[0].texto.startsWith('No miro las ubicaciones. ¿Dónde estás?') && ub[0].texto.includes('«estoy en Portugal»'), ub[0]?.texto);
     const f = await p([{ error: { message: 'el subflujo falló' } }]);
     afirmar('si el flujo principal falló: aviso honesto, nunca silencio', f.length === 1 && f[0].texto === comun.MENSAJE_FALLO_CANAL);
     afirmar('mensajes vacíos o sin texto cuentan como fallo', (await p([{ mensajes: ['  ', ''] }]))[0].texto === comun.MENSAJE_FALLO_CANAL && (await p([{ mensajes: [] }]))[0].texto === comun.MENSAJE_FALLO_CANAL);
@@ -603,7 +605,7 @@ async function main() {
     afirmar('el mensaje de imagen: type image con el id de Meta y sin pie', im.type === 'image' && im.image.id === '555' && im.to === NUMERO && im.messaging_product === 'whatsapp' && im.recipient_type === 'individual' && !('caption' in im.image) && !('document' in im));
     const doc = comun.cuerpoArchivoSubido({ para: NUMERO, categoria: 'document', mediaId: '556', nombre: 'Contrato.pdf' });
     afirmar('el mensaje de documento: type document con el id de Meta y el nombre de archivo', doc.type === 'document' && doc.document.id === '556' && doc.document.filename === 'Contrato.pdf' && !('image' in doc));
-    afirmar('el tope de archivos por petición es 20', comun.MAX_ENVIOS_ARCHIVOS === 20);
+    afirmar('el tope de archivos por petición es 30', comun.MAX_ENVIOS_ARCHIVOS === 30);
     const cab = comun.cuerpoCabeceraCarpeta({ para: NUMERO, ruta: 'Fotos/Viajes', total: 3 });
     afirmar('la cabecera de carpeta: texto al número con el nombre en negrita y el número de archivos', cab.type === 'text' && cab.to === NUMERO && cab.messaging_product === 'whatsapp' && cab.text.body === '*Fotos/Viajes* (3)', JSON.stringify(cab));
     afirmar('la cabecera limpia los caracteres de formato del nombre y nunca queda vacía', comun.cuerpoCabeceraCarpeta({ para: NUMERO, ruta: 'Trabajo/*Informes* _1_', total: 2 }).text.body === '*Trabajo/Informes 1* (2)' && comun.cuerpoCabeceraCarpeta({ para: NUMERO, ruta: '', total: 1 }).text.body === '*Sin carpeta* (1)');
@@ -635,8 +637,8 @@ async function main() {
     const raros = await correr(preparar, { input: [{}], nodos: { 'Turno de respuesta': principal([{ drive_file_id: 'a b/c', nombre: 'x', ruta: 'Fotos' }, null, { nombre: 'sin id' }, { drive_file_id: idA, ruta: 'Fotos' }]) } });
     afirmar('ids no válidos y elementos raros se descartan, y no dejan una cabecera huérfana', raros.length === 2 && raros[0].tipo === 'cabecera' && raros[0].total === 1 && raros[1].drive_file_id === idA && raros[1].nombre === '');
     afirmar('solo ids no válidos: no queda nada (ni cabecera)', (await correr(preparar, { input: [{}], nodos: { 'Turno de respuesta': principal([{ drive_file_id: 'a b/c', ruta: 'Fotos' }]) } })).length === 0);
-    const muchos = await correr(preparar, { input: [{}], nodos: { 'Turno de respuesta': principal(Array.from({ length: 25 }, (_, i) => ({ drive_file_id: 'ID_DRIVE_' + String(i).padStart(4, '0'), nombre: 'f' + i, ruta: 'Fotos' }))) } });
-    afirmar('nunca se mandan más de 20 archivos aunque el flujo principal devolviera más (21 items: 20 archivos y una cabecera)', muchos.filter((x) => x.tipo === 'archivo').length === 20 && muchos.length === 21);
+    const muchos = await correr(preparar, { input: [{}], nodos: { 'Turno de respuesta': principal(Array.from({ length: 35 }, (_, i) => ({ drive_file_id: 'ID_DRIVE_' + String(i).padStart(4, '0'), nombre: 'f' + i, ruta: 'Fotos' }))) } });
+    afirmar('nunca se mandan más de 30 archivos aunque el flujo principal devolviera más (31 items: 30 archivos y una cabecera)', muchos.filter((x) => x.tipo === 'archivo').length === 30 && muchos.length === 31);
 
     // ---- Mensaje de cabecera ----
     const cab = await correr(nodo('mensaje-cabecera.js', true), { input: [{ tipo: 'cabecera', ruta: 'Fotos/Viajes', total: 3 }] });
@@ -873,7 +875,7 @@ async function main() {
 
     const base = nodo('configuracion.js').replace('TU-PROYECTO', 'abcdefgh').replace('TU-PHONE-NUMBER-ID', '123456789012').replace('TU-ID-DE-ENTRADA', '1AbCdEfGhIjKlMnOp');
     const [c] = await correr(base);
-    afirmar('Configuración: ESPERA_ARCHIVOS_S = 4 (varios archivos seguidos, un solo aviso; sección 71) y el «quieto» un segundo menos', c.config.espera_archivos_s === 4 && c.config.quieto_archivos_s === 3);
+    afirmar('Configuración: ESPERA_ARCHIVOS_S = 4 (varios archivos seguidos, un solo aviso) y el «quieto» un segundo menos', c.config.espera_archivos_s === 4 && c.config.quieto_archivos_s === 3);
     const [c0] = await correr(base.replace('const ESPERA_ARCHIVOS_S = 4;', 'const ESPERA_ARCHIVOS_S = 0;'));
     afirmar('Configuración: con ESPERA_ARCHIVOS_S = 0 el «quieto» nunca baja de 0', c0.config.espera_archivos_s === 0 && c0.config.quieto_archivos_s === 0);
     afirmar('Configuración: sin espera para agrupar, nueva petición de turno cada 2 s y vueltas suficientes para que caduque el turno', c.config.espera_agrupar_s === 0 && c.config.espera_turno_s === 2 && c.config.max_esperas_turno * c.config.espera_turno_s > c.config.turno_min * 60);

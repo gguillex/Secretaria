@@ -28,7 +28,7 @@ const CAMPOS_FECHA = ['fecha_inicio', 'fecha_fin', 'fecha_limite', 'recordar_en'
 const CAMPOS_CORREGIBLES = ['tipo', 'titulo', 'contenido', 'anadir_contenido', ...CAMPOS_FECHA, 'lista', 'proyecto', 'etiquetas'];
 // Los listados llevan solo el título; el contenido (el contexto) solo hace falta para marcar «…» y para el detalle completo. No se pide
 // el mensaje original del usuario: saldría idéntico en todo lo que nació de un mismo mensaje.
-const CAMPOS_CONSULTA = 'tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,proyecto';
+const CAMPOS_CONSULTA = 'tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,zona_alarma,lugar_alarma,proyecto,carpeta';
 // Tipos que admite el filtro de cancelar y completar: los de los items más "alarma" (tarea con hora de aviso y sin fecha límite, como en los listados)
 const TIPOS_FILTRO = [...TIPOS, 'alarma'];
 // Cancelar o completar más de estos elementos de una vez se pregunta antes (se enseña la lista)
@@ -138,6 +138,8 @@ function normalizarItem(it, i, config, avisos) {
     etiquetas: normalizarEtiquetas(it.etiquetas),
     confianza,
     espera_archivo: esperaArchivo,
+    // La carpeta de Drive de una nota (base de datos). Solo si la hay: sin la base de datos al día la columna no existe y no se puede escribir
+    ...(it.tipo === 'nota' && typeof it.carpeta === 'string' && it.carpeta.length <= 200 && segmentosCarpeta(it.carpeta) ? { carpeta: segmentosCarpeta(it.carpeta).join('/') } : {}),
   };
 }
 
@@ -595,6 +597,8 @@ function validarRespuesta(texto, config, refs, refsArchivos = {}, opciones = {})
     if (f.tipo === 'imagen' || f.tipo === 'documento') tipo = f.tipo;
     else if (f.tipo !== undefined && f.tipo !== null && f.tipo !== '') avisos.push(`ver_archivos.tipo "${f.tipo}" no es imagen ni documento: se muestran todos`);
     filtroArchivos = { carpeta, tipo, solo_pendientes: f.solo_pendientes === true, enviar: f.enviar === true };
+    // «Dame los pdf de X»: solo lo pone el atajo de código
+    if (f.tipo === 'pdf') filtroArchivos.tipo = 'pdf';
   }
 
   // Borrar en Drive: una carpeta (entera, o solo sus archivos) y/o archivos concretos por su referencia
@@ -736,7 +740,7 @@ function nombreSeguro(nombre) {
 }
 
 const extensionDe = (n) => /\.([A-Za-z0-9]{1,5})$/.exec(String(n ?? ''))?.[1] ?? '';
-// El nombre que pone el sistema al recibir una foto: "2026-10-12 1830 · WhatsApp.jpg" (desde la sección 76, "… · WhatsApp k3f9.jpg")
+// El nombre que pone el sistema al recibir una foto: "2026-10-12 1830 · WhatsApp.jpg" (, "… · WhatsApp k3f9.jpg")
 const NOMBRE_AUTOMATICO = /^(\d{4}-\d{2}-\d{2} \d{4}) · WhatsApp(?: [0-9a-z]{4})?\.[A-Za-z0-9]{1,5}$/;
 
 // Nuevo nombre de cada archivo (o null si se queda como está):
@@ -762,6 +766,33 @@ function nombresNuevos(refs, info, { titulo = null, nombre = null }) {
 
 // Valida lo que el modelo dice de los archivos. refsArchivos: referencias (a1…) que se le dieron. Devuelve
 // { refs, carpeta, nombre } o null (sin archivos).
+// Una nota que NOMBRA una carpeta tuya de Drive («el hotel de Budapest es el Hilton», con «Viajes/Budapest») va a esa carpeta, aunque no digas
+// «ponme en Budapest» . Solo las notas: una tarea, alarma o cita que nombra Budapest sigue siendo
+// lo que es. Solo nombres propios de carpeta: los genéricos («Fotos», «Viajes», «Trabajo»…) atraparían cualquier nota que dijera la palabra.
+// Si nombra dos carpetas, no se adivina. Las de Entrada no cuentan. Devuelve la línea para la confirmación o null.
+const CARPETA_GENERICA = /^(?:fotos?|imagenes|videos?|notas?|entrada|documentos?|docs|archivos?|ficheros|descargas|varios|otros|otras|personal|general|trabajo|trabajos|viajes?|casa|recetas?|facturas?|pdfs?|audios?|musica|libros|apuntes|proyectos?|cosas|importante|pendientes?|nueva|nuevo|carpeta|compras?|ideas?)$/;
+function notasACarpeta(datos, mensaje, rutasConocidas, avisos) {
+  if (datos.intencion !== 'guardar') return null;
+  const rutas = [...new Set((rutasConocidas ?? []).filter((r) => typeof r === 'string' && segmentosCarpeta(r) && !/^entrada(?:\/|$)/i.test(r)))];
+  const porNombre = new Map();
+  for (const r of rutas) {
+    const n = sinSignos(r.split('/').at(-1));
+    if (n.length < 4 || CARPETA_GENERICA.test(n)) continue;
+    porNombre.set(n, [...(porNombre.get(n) ?? []), r]);
+  }
+  if (porNombre.size === 0) return null;
+  const lineas = [];
+  for (const it of datos.items) {
+    if (it.tipo !== 'nota' || it.carpeta || it.proyecto) continue;
+    const texto = ` ${sinSignos(`${mensaje ?? ''} ${it.titulo ?? ''} ${it.contenido ?? ''}`)} `;
+    const nombradas = [...porNombre.entries()].filter(([n]) => texto.includes(` ${n} `));
+    if (nombradas.length !== 1 || nombradas[0][1].length !== 1) continue;
+    it.carpeta = nombradas[0][1][0];
+    avisos.push(`la nota «${it.titulo}» nombra la carpeta «${it.carpeta}»: va a esa carpeta`);
+    lineas.push(`📂 En la carpeta «${limpiarTxt(it.carpeta)}».`);
+  }
+  return lineas.length > 0 ? [...new Set(lineas)].join('\n') : null;
+}
 function normalizarArchivos(a, intencion, refsArchivos, avisos) {
   if (typeof a !== 'object' || a === null || Array.isArray(a)) fallo('archivos no es un objeto');
   if (!Array.isArray(a.refs) || !a.refs.every((r) => typeof r === 'string')) fallo('archivos.refs debe ser una lista de referencias');
@@ -818,6 +849,16 @@ const diaCorto = (ms) => {
   return `${p.weekday} ${p.day} ${p.month}`.replace(/\./g, '');
 };
 const horaCorta = (ms) => fmtHoraCorta.format(new Date(ms));
+// Una alarma se escribe en SU zona: día y hora de allí, con el sitio entre paréntesis si no es Madrid
+const zonaDeItem = (r) => (typeof r?.zona_alarma === 'string' && r.zona_alarma !== '' ? r.zona_alarma : 'Europe/Madrid');
+const diaDeAlarma = (r, ms) => {
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('es-ES', { timeZone: zonaDeItem(r), weekday: 'short', day: 'numeric', month: 'short' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+    return `${p.weekday} ${p.day} ${p.month}`.replace(/\./g, '');
+  } catch (e) {
+    return diaCorto(ms);
+  }
+};
 const limpiarTxt = (s) => String(s ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim();
 
 // Intervalo de un evento en milisegundos; sin fin válido dura DURACION_POR_DEFECTO_MIN (como en Calendar)
@@ -1014,6 +1055,8 @@ const COMANDOS = [
   ['memory', 'Lo que recuerdo de ti, numerado', 'atajos'],
   ['forget', 'Olvidar un dato de mi memoria: /forget 2 (el número de /memory)', 'atajos'],
   ['schedule', 'Tu horario fijo (/horario quitar 2 para quitar un bloque)', 'atajos'],
+  ['trip', 'Dónde creo que estás y la hora de allí (de viaje: «estoy en Portugal», «he vuelto»)', 'atajos'],
+  ['trips', 'Tus viajes: el actual y los planeados, con sus fechas', 'atajos'],
 ];
 // Alias en español, por si se escriben sin pensar (el comando oficial es el inglés)
 const ALIAS_COMANDO = {
@@ -1030,6 +1073,7 @@ const ALIAS_COMANDO = {
   memoria: 'memory', recuerdos: 'memory', recuerdas: 'memory',
   olvidar: 'forget', olvida: 'forget', olvidalo: 'forget',
   horario: 'schedule', horarios: 'schedule',
+  viaje: 'trip', zona: 'trip', travel: 'trip', viajes: 'trips',
 };
 
 const TEXTO_AYUDA =
@@ -1102,6 +1146,7 @@ const MANUAL = {
     texto:
       '• «idea: probar el nuevo gimnasio» o «nota: la contraseña del wifi está en el router».\n' +
       '• Aparecen en tu lista de pendientes como *Pensamientos*: «quita todos los pensamientos» las quita todas.\n' +
+      '• En una carpeta tuya de Drive: «ponme en Budapest que el 1 de agosto me voy», o una nota que la nombre («el hotel de Budapest es el Hilton»). Salen en *Notas*, debajo del nombre de la carpeta. Si no tienes esa carpeta, se guarda como nota normal.\n' +
       '• Si algo es para hacer («tengo que…», «llamar a…»), lo guardo como tarea, no como nota.',
   },
   archivos: {
@@ -1111,6 +1156,7 @@ const MANUAL = {
       '• Para clasificarlo, *responde a su foto* (o a mi confirmación) con, por ejemplo, «guárdala en Fotos/Viajes» o «es la factura de la luz». También en bloque: «las 3 últimas a Fotos».\n' +
       '• O escríbelo directamente en el *pie de la foto*: si pones una ruta («Fotos/Viajes») la guardo ahí sin preguntarte.\n' +
       '• Para recibirlos: «dame las fotos» (te las mando), «dime qué archivos tengo» o /files (la lista con enlaces).\n' +
+      '• «Dame todos los archivos de Informes técnicos» (o de una carpeta) te manda todo lo que hay en Drive, también lo que subiste a mano. Para acotar, di el tipo («los pdf», «las fotos») o el nombre del archivo. Si son más de 30, te mando los 30 más recientes y del resto el enlace.\n' +
       '• Si mandas varias seguidas, te contesto con un solo mensaje, y «ponlo en Budapest» (sin citar nada) vale para todas.\n' +
       '• Si la carpeta no existe pero hay una parecida («Budapest» y ya tienes «Viajes/Budapest»), te pregunto dónde: contesta con el número.\n' +
       '• Para cambiar de carpeta las ya guardadas, también con un audio: «mueve las fotos de Budapest a Viajes/Budapest» («los archivos» son todos) o «mueve todo lo de Notas a Budapest». Uno solo, con su nombre exacto: «mueve 2026-10-23 1504 · WhatsApp k3f9.jpg a Notas». Y los que acabo de mover o guardar: «muévelos a Viajes» o «mueve esos archivos a Viajes». Si te equivocas, justo después: «déjalo como estaba» o «deshaz».\n' +
@@ -1123,6 +1169,7 @@ const MANUAL = {
       '• Mover una carpeta dentro de otra: «mete la carpeta Viajes dentro de Fotos» o «mueve Budapest a Viajes». Varias a la vez: «crea la carpeta Viajes y mete dentro Budapest y Roma». Va con todo lo que tenga dentro. No se mueven Entrada ni Notas, ni puede quedar a más de 3 niveles.\n' +
       '• Si te propongo algo («¿Paso los archivos de «Budapest» a «Viajes/Budapest»?»), basta con «sí».\n' +
       '• Lo que pides se ve en Drive en unos segundos. Si al mover sus archivos una carpeta se queda vacía, la mando a la papelera (nunca Entrada ni Notas).\n' +
+      '• «Crea la carpeta Recetas» o «crea la carpeta Recetas dentro de Fotos»: la creo sin preguntar.\n' +
       '• Borrar: «borra la carpeta Fotos/Viajes», «vacía la carpeta Facturas» (quita lo de dentro y deja la carpeta), «borra la foto del DNI». Te enseño lo que se borraría y solo lo mando a la papelera de Drive si me dices que sí (se recupera unos 30 días). Entrada y Notas no se borran enteras.\n' +
       '• Si cambias algo a mano en Drive, lo anoto y te aviso.',
   },
@@ -1162,6 +1209,24 @@ const MANUAL = {
       '• «Olvida lo de la leche» sin decir «memoria» es quitar una tarea o una nota, no un dato.\n' +
       '• Recuerdo como mucho 50 datos. Mi nombre no lo olvido: se cambia.',
   },
+  viajes: {
+    titulo: 'De viaje: la hora de allí',
+    texto:
+      '• Dime dónde estás: «estoy en Portugal», «estoy en Tenerife hasta el domingo». No miro tu ubicación: me lo tienes que escribir.\n' +
+      '• Puedes avisarme antes: «el 20 me voy a Japón hasta el 30», «me voy a Portugal mañana». Ese día cambio a la hora de allí y ya te digo qué citas y alarmas tienes esos días, por si chocan.\n' +
+      '• Por tramos: «me quedo hasta dentro de 5 días y luego me voy a México». Al acabar uno paso al siguiente; solo vuelvo a la hora de España si no hay más.\n' +
+      '• Para irte: «me voy mañana de Portugal» (te pregunto a dónde), «me voy mañana de Portugal a México», «mañana vuelvo a casa», «vuelvo a España el 20».\n' +
+      '• Fuera, las alarmas van a la hora de allí, sin preguntar: «Coger la cartera: hoy a las 19:00 (Portugal)». Las citas también, salvo si no sé hasta cuándo estás: entonces te pregunto si es la hora de España o la de allí.\n' +
+      '• Si nombras un sitio («alarma a las 19 para el vuelo en Lisboa») uso la hora de ese sitio; si no está claro, te pregunto. «Hora de Portugal» u «hora española» lo dejan claro.\n' +
+      '• Si una alarma o cita cae en un día en que estarás en otro sitio (el siguiente tramo, o ya de vuelta), te aviso («Ese día ya estarás en Japón…») y te pregunto de cuál de los dos es la hora.\n' +
+      '• Si allí es la misma hora (Francia) y apuntas desde aquí una cita para esas fechas, te pregunto si la apunto igualmente. Las alarmas, sin preguntar.\n' +
+      '• «Dame mis viajes» o /viajes: el actual y los planeados, con sus fechas (no salen en «dame todo»). El día antes de irte, el resumen de las 7:00 te lo recuerda con lo que tienes esos días.\n' +
+      '• Cambiar o quitar un viaje: «el viaje a Japón es del 21 al 28», «el viaje a Japón es hasta el 28», «cancela el viaje a Japón», «ya no me voy a Japón».\n' +
+      '• Sin decir adónde: «tengo un viaje del 8 al 10». Lo apunto y te pregunto a dónde vas; si no quieres decirlo, se queda como viaje (con la hora de España).\n' +
+      '• Por España, con las dos fechas: «tengo un viaje a Barcelona del 8 al 10». Un viaje nunca se apunta como cita; las horas de salida y vuelta no se guardan (pídeme una alarma si la quieres).\n' +
+      '• Cada alarma y cita sale siempre a su hora con el país entre paréntesis si no es de Madrid. Nada cambia solo al viajar. «Muévela a las 20» es a las 20:00 de su país.\n' +
+      '• «¿Dónde estoy?» o /viaje: dónde creo que estás. «He vuelto»: vuelves a la hora de España.',
+  },
 };
 const TEMAS_MANUAL = Object.keys(MANUAL);
 
@@ -1200,7 +1265,13 @@ const textoName = (nombre) =>
     : 'Todavía no me has puesto nombre.';
 
 // Quita acentos, signos y mayúsculas para comparar frases de ayuda
-const sinSignos = (s) => sinAcentos(s).replace(/[¿?¡!.,;:()"«»]/g, ' ').replace(/\s+/g, ' ').trim();
+// Abreviaturas de chat: todo lo que el código reconoce sin el modelo (respuestas a sus preguntas,
+// viajes, órdenes) pasa por aquí, así que «ns», «q», «xq», «tb» o «mñn» valen como «no sé», «que», «porque», «también» o «mañana». Solo palabras
+// sueltas y sin ambigüedad (no «x», «d» ni «pa»). Al modelo le llega el mensaje tal cual: ya entiende las abreviaturas
+const ABREVIATURAS = { ns: 'no se', nse: 'no se', nose: 'no se', nidea: 'ni idea', q: 'que', k: 'que', ke: 'que', qe: 'que', xq: 'porque', pq: 'porque', porq: 'porque', xk: 'porque', pk: 'porque', tb: 'tambien', tmb: 'tambien', tbn: 'tambien', tbm: 'tambien', xfa: 'por favor', xfavor: 'por favor', pls: 'por favor', plis: 'por favor', mnn: 'manana', mna: 'manana', mnna: 'manana', dnd: 'donde', cdo: 'cuando', cnd: 'cuando', qnd: 'cuando', xa: 'para', tmpc: 'tampoco', tampoc: 'tampoco', bn: 'bien', msj: 'mensaje', nd: 'nada', tdo: 'todo', tds: 'todos', ntp: 'no te preocupes', dps: 'despues', dsp: 'despues' };
+const RE_ABREVIATURAS = new RegExp(`(^| )(${Object.keys(ABREVIATURAS).join('|')})(?= |$)`, 'g');
+const sinAbreviaturas = (t) => t.replace(RE_ABREVIATURAS, (_, ini, w) => `${ini}${ABREVIATURAS[w]}`).replace(RE_ABREVIATURAS, (_, ini, w) => `${ini}${ABREVIATURAS[w]}`);
+const sinSignos = (s) => sinAbreviaturas(sinAcentos(s).replace(/[¿?¡!.,;:()"«»]/g, ' ').replace(/\s+/g, ' ').trim());
 const FRASES_AYUDA = new Set([
   'ayuda', 'ayuda por favor', 'necesito ayuda', 'ayudame', 'ayudame por favor', 'help', 'menu', 'comandos', 'instrucciones', 'socorro', 'auxilio',
   'no se que hacer', 'no se que puedo hacer', 'no se que decir', 'no se como funciona', 'no se usarte', 'no se como usarte',
@@ -1255,6 +1326,55 @@ const FRASE_TODO_SUELTO = /^ (dame|damelo|dimelo|dime|ensename|ensenamelo|muestr
 // ese caso lo decide el modelo). Devuelve { ruta, refs } o null.
 const VERBOS_ARCHIVAR = '(?:guarda|guardala|guardalo|guardalas|guardalos|mueve|muevela|muevelo|muevelas|muevelos|pon|ponla|ponlo|ponlas|ponlos|archivala|archivalo|archivalas|archivalos|metela|metelo|metelas|metelos|llevala|llevalo|llevalas|llevalos)';
 const PREFIJO_ARCHIVAR = new RegExp(`^(?:${VERBOS_ARCHIVAR}\\s+)?(?:(?:en|a|dentro de|hacia)\\s+)?(?:la\\s+)?(?:carpeta\\s+)?`);
+// «Crea la carpeta Recetas», «crea una carpeta llamada Recetas dentro de Fotos», «crea la carpeta Informes en Trabajo»: por código, sin el
+// modelo (que a veces preguntaba antes de crearla). Lo que además mueve algo («crea la carpeta Viajes y mete dentro…») lo trata
+// interpretarMoverCarpeta.
+const CREAR_CARPETA = /^(?:(?:oye|porfa|por favor) )?(?:cr[eé]a(?:me)?|haz(?:me)?|abre(?:me)?|a[nñ]ade|nueva)(?: una| la| otra)?(?: nueva)? carpeta(?: nueva)?(?: (?:llamada|que se llame|que se llama|con el nombre(?: de)?|de nombre))? (.+?)(?: (?:dentro de(?: la carpeta)?|en la carpeta|en|bajo) (.+?))?$/i;
+function interpretarCrearCarpeta(mensaje) {
+  const original = String(mensaje ?? '').replace(/[¿?¡!.«»"]/g, ' ').replace(/\s+/g, ' ').trim().replace(/\s+(?:por favor|porfa|xfa|xfavor|pls|plis)$/i, '');
+  if (/ y (?:mete|meteme|pon|ponme|mueve|pasa|guarda)\b/i.test(original)) return null;
+  const m = CREAR_CARPETA.exec(original);
+  if (!m) return null;
+  const limpia = (t) => (t ?? '').replace(/^(?:la |el )/i, '').trim();
+  const nombre = limpia(m[1]);
+  const padre = limpia(m[2]);
+  if (!nombre || nombre.split(' ').length > 5 || (padre && padre.split(' ').length > 5)) return null;
+  const ruta = (padre ? `${padre}/${nombre}` : nombre).split('/').map((x) => x.trim()).filter(Boolean).join('/');
+  return segmentosCarpeta(ruta) ? { ruta } : null;
+}
+// «Ponme en Budapest que el 1 de agosto me voy», «apunta en Recetas: tarta de queso», «anota en la carpeta Viajes que…»: una NOTA
+// ligada a una carpeta de Drive que ya existe. Va antes que lo de los viajes y que el modelo: si nombras una carpeta tuya, es una nota en ella,
+// aunque hable de un viaje (choque visto con el usuario el 2026-11-24). Devuelve:
+//   { ruta, titulo }            la carpeta existe (por su ruta o por su último tramo, sin dudas)
+//   { varias, nombre }          varias carpetas con ese nombre: se pide la ruta (no se adivina)
+//   { sinCarpeta, titulo }      no existe ninguna: nota normal y se dice (decisión del usuario)
+//   null                        no es esto («ponme en la lista de la compra…», «pon en el calendario…»: lo decide lo de siempre)
+const NOTA_EN_CARPETA = /^(?:(?:oye|porfa|por favor) )?(?:pon|ponme|apunta|apuntame|anota|anotame|guarda|guardame|mete|meteme|anade|escribe|escribeme)(?: una nota| la nota| esto| que)? en (?:la carpeta (?:de )?|mi carpeta (?:de )?|notas de |las notas de )?(.+?)(?: que| :| ,|:|,) (.+)$/;
+const NO_ES_CARPETA_NOTA = /\b(?:lista|listas|compra|calendario|agenda|tareas?|alarmas?|citas?|recordatorios?|memoria|horario|proyecto|whatsapp|el movil|mi movil|el chat|la nevera|casa|el trabajo)\b/;
+// La misma forma sobre el texto original (con mayúsculas y tildes), para sacar el nombre y el texto de la nota tal como los escribió
+const NOTA_EN_CARPETA_ORIGINAL = /^\s*(?:(?:oye|porfa|por favor),?\s+)?(?:p[oó]n(?:me)?|ap[uú]nta(?:me)?|an[oó]ta(?:me)?|gu[aá]rda(?:me)?|m[eé]te(?:me)?|a[nñ]ade|escr[ií]be(?:me)?)(?:\s+(?:una nota|la nota|esto|que|q))?\s+en\s+(?:(?:la|mi) carpeta(?: de)?\s+|(?:las )?notas de\s+)?(.+?)(?:\s+(?:que|qu[eé]|q)\s+|\s*[:,]\s*)(.+?)\s*$/i;
+function interpretarNotaEnCarpeta(mensaje, rutasConocidas) {
+  const m = NOTA_EN_CARPETA.exec(sinSignos(String(mensaje ?? '').replace(/\s*:\s*/, ' que ')));
+  const o = NOTA_EN_CARPETA_ORIGINAL.exec(String(mensaje ?? ''));
+  if (!m || !o) return null;
+  const nombre = m[1].replace(/^(?:la |el |los |las )/, '').trim();
+  if (!nombre || nombre.split(' ').length > 4 || NO_ES_CARPETA_NOTA.test(nombre)) return null;
+  const nombreOriginal = o[1].replace(/^(?:la|el|los|las)\s+/i, '').trim();
+  const cuerpo = o[2].replace(/[.\s]+$/, '').trim();
+  if (!cuerpo) return null;
+  const titulo = cuerpo.charAt(0).toUpperCase() + cuerpo.slice(1);
+  // «Apunta en notas que…»: una nota normal, sin carpeta y sin avisar
+  if (/^(?:notas|mis notas|pensamientos|entrada)$/.test(nombre)) return { ruta: null, titulo };
+  const rutas = [...new Set((Array.isArray(rutasConocidas) ? rutasConocidas : []).filter((r) => typeof r === 'string' && segmentosCarpeta(r) && !/^entrada(?:\/|$)/i.test(r)))];
+  const exacta = rutas.find((r) => sinAcentos(r) === nombre);
+  if (exacta) return { ruta: exacta, titulo };
+  const vistas = new Set();
+  const porTramo = rutas.filter((r) => sinAcentos(r.split('/').at(-1)) === nombre && !vistas.has(sinAcentos(r)) && vistas.add(sinAcentos(r)));
+  if (porTramo.length === 1) return { ruta: porTramo[0], titulo };
+  if (porTramo.length > 1) return { varias: porTramo, nombre: nombreOriginal };
+  // Sin carpeta con ese nombre: solo si parece un nombre de carpeta (corto); si no, no es esto
+  return nombre.split(' ').length <= 3 ? { ruta: null, sinCarpeta: nombreOriginal, titulo } : null;
+}
 function interpretarCarpetaSuelta(mensaje, refsCitados) {
   if (!Array.isArray(refsCitados) || refsCitados.length === 0 || typeof mensaje !== 'string') return null;
   const t = mensaje.normalize('NFC').trim();
@@ -1585,7 +1705,767 @@ function interpretarMoverEsos(mensaje, conocidas = []) {
   return { destino };
 }
 
-// --- «Ponlo en Budapest» sin citar nada, justo después de mandar fotos(preguntaba «¿a cuál te refieres?») ---
+// --- «Dame todos los archivos de Informes técnicos» ---
+// Todos los archivos de una carpeta, también los subidos a mano a Drive. Solo se acota si se dice el tipo («las fotos», «los
+// pdf», «los documentos»); un archivo por su nombre lo sigue resolviendo el modelo. El destino tiene que ser una carpeta
+// que existe: si no, decide el modelo. Devuelve { carpeta, tipo, enviar: true } o null.
+const TIPO_VER = { archivo: null, archivos: null, apuntes: null, fichero: null, ficheros: null, cosas: null, documento: 'documento', documentos: 'documento', foto: 'imagen', fotos: 'imagen', imagen: 'imagen', imagenes: 'imagen', pdf: 'pdf', pdfs: 'pdf' };
+const PIDE_VER = '(?:dame|damelos|damelas|mandame|mandamelos|mandamelas|enviame|enviamelos|enviamelas|pasame|pasamelos|pasamelas|ensename|muestrame|quiero|necesito)';
+const VER_ARCHIVOS = new RegExp(`${PREFIJO_MOVER}${PIDE_VER}(?: todos| todas)?(?: los| las| mis)? (archivos?|apuntes|ficheros?|cosas|documentos?|fotos?|imagen|imagenes|pdfs?)(?: que tengo)?(?: guardad[oa]s)?(?: en el drive| en drive| del drive| de drive)? (?:de|del|en|sobre)(?: la| el)?(?: carpeta)?(?: de)? (.+?)(?: que tengo)?(?: en el drive| en drive| del drive| de drive)?$`);
+const VER_TODO_DRIVE = new RegExp(`${PREFIJO_MOVER}${PIDE_VER} todo(?: lo)?(?: que tengo)? (?:en el drive|en drive|del drive|de drive) (?:de|del|sobre)(?: la| el)?(?: carpeta)?(?: de)? (.+)$`);
+const VER_TODO_DE_DRIVE = new RegExp(`${PREFIJO_MOVER}${PIDE_VER} todo lo (?:de|del)(?: la| el)?(?: carpeta)?(?: de)? (.+?) (?:que tengo )?(?:en el drive|en drive|del drive|de drive)$`);
+function interpretarVerArchivos(mensaje, rutas = []) {
+  if (typeof mensaje !== 'string') return null;
+  const t = mensaje.normalize('NFC').replace(/[\u200B-\u200F\u2060-\u2064\uFEFF]/g, '').replace(/\s+/g, ' ').replace(/[\s.!?¿¡,;:]+$/, '').replace(/^[¿¡]/, '').trim();
+  if (t === '' || t.length > 160) return null;
+  const base = sinAcentos(t);
+  let objetivo = null;
+  let tipo = null;
+  const m = VER_ARCHIVOS.exec(base);
+  if (m) {
+    objetivo = m[2];
+    tipo = TIPO_VER[m[1]] ?? null;
+  } else {
+    const d = VER_TODO_DRIVE.exec(base) ?? VER_TODO_DE_DRIVE.exec(base);
+    if (d) objetivo = d[1];
+  }
+  if (!objetivo) return null;
+  const o = objetivo.trim();
+  const lista = (rutas ?? []).filter((r) => typeof r === 'string' && r !== '');
+  const exacta = lista.find((r) => sinAcentos(r) === o);
+  if (exacta) return { carpeta: exacta, tipo, enviar: true };
+  const vistos = new Set();
+  const porTramo = lista.filter((r) => clavesIguales(ultimoTramo(r), o) && !vistos.has(sinAcentos(r)) && vistos.add(sinAcentos(r)));
+  return porTramo.length === 1 ? { carpeta: porTramo[0], tipo, enviar: true } : null;
+}
+
+// --- Viajes y zona horaria ---
+// El usuario dice dónde está («estoy en Portugal», «me voy a Nueva York», «he vuelto»): no se usa la ubicación de WhatsApp (decisión suya, para
+// no mandar sus coordenadas a ningún servicio de fuera). Se resuelve con esta tabla de países y ciudades → zona horaria (IANA). Un país con
+// varias zonas pide la ciudad. Mientras está fuera de la hora de España, cada alarma o cita con una hora fija pregunta si es la hora de España
+// o la del país. Lo que no está en la tabla no se toma como un viaje («estoy en clase» sigue su camino).
+const ZONA_ESPANA = 'Europe/Madrid';
+const L = (pais, zona) => ({ pais, zona });
+const LUGARES = {
+  espana: L('España', ZONA_ESPANA), madrid: L('España', ZONA_ESPANA), barcelona: L('España', ZONA_ESPANA), valencia: L('España', ZONA_ESPANA), sevilla: L('España', ZONA_ESPANA), malaga: L('España', ZONA_ESPANA), bilbao: L('España', ZONA_ESPANA), mallorca: L('España', ZONA_ESPANA), ibiza: L('España', ZONA_ESPANA), menorca: L('España', ZONA_ESPANA), baleares: L('España', ZONA_ESPANA), peninsula: L('España', ZONA_ESPANA),
+  canarias: L('Canarias', 'Atlantic/Canary'), 'islas canarias': L('Canarias', 'Atlantic/Canary'), tenerife: L('Canarias', 'Atlantic/Canary'), 'gran canaria': L('Canarias', 'Atlantic/Canary'), lanzarote: L('Canarias', 'Atlantic/Canary'), fuerteventura: L('Canarias', 'Atlantic/Canary'), 'la palma': L('Canarias', 'Atlantic/Canary'), 'la gomera': L('Canarias', 'Atlantic/Canary'), 'el hierro': L('Canarias', 'Atlantic/Canary'),
+  portugal: L('Portugal', 'Europe/Lisbon'), lisboa: L('Portugal', 'Europe/Lisbon'), oporto: L('Portugal', 'Europe/Lisbon'), algarve: L('Portugal', 'Europe/Lisbon'), madeira: L('Portugal (Madeira)', 'Atlantic/Madeira'), azores: L('Portugal (Azores)', 'Atlantic/Azores'),
+  'reino unido': L('Reino Unido', 'Europe/London'), inglaterra: L('Reino Unido', 'Europe/London'), escocia: L('Reino Unido', 'Europe/London'), gales: L('Reino Unido', 'Europe/London'), londres: L('Reino Unido', 'Europe/London'), manchester: L('Reino Unido', 'Europe/London'), edimburgo: L('Reino Unido', 'Europe/London'), irlanda: L('Irlanda', 'Europe/Dublin'), dublin: L('Irlanda', 'Europe/Dublin'), islandia: L('Islandia', 'Atlantic/Reykjavik'),
+  francia: L('Francia', 'Europe/Paris'), paris: L('Francia', 'Europe/Paris'), italia: L('Italia', 'Europe/Rome'), roma: L('Italia', 'Europe/Rome'), milan: L('Italia', 'Europe/Rome'), alemania: L('Alemania', 'Europe/Berlin'), berlin: L('Alemania', 'Europe/Berlin'), 'paises bajos': L('Países Bajos', 'Europe/Amsterdam'), holanda: L('Países Bajos', 'Europe/Amsterdam'), amsterdam: L('Países Bajos', 'Europe/Amsterdam'), belgica: L('Bélgica', 'Europe/Brussels'), bruselas: L('Bélgica', 'Europe/Brussels'), suiza: L('Suiza', 'Europe/Zurich'), austria: L('Austria', 'Europe/Vienna'), viena: L('Austria', 'Europe/Vienna'), polonia: L('Polonia', 'Europe/Warsaw'), chequia: L('Chequia', 'Europe/Prague'), 'republica checa': L('Chequia', 'Europe/Prague'), praga: L('Chequia', 'Europe/Prague'), hungria: L('Hungría', 'Europe/Budapest'), budapest: L('Hungría', 'Europe/Budapest'), croacia: L('Croacia', 'Europe/Zagreb'), noruega: L('Noruega', 'Europe/Oslo'), suecia: L('Suecia', 'Europe/Stockholm'), dinamarca: L('Dinamarca', 'Europe/Copenhagen'), andorra: L('Andorra', 'Europe/Andorra'), malta: L('Malta', 'Europe/Malta'),
+  grecia: L('Grecia', 'Europe/Athens'), atenas: L('Grecia', 'Europe/Athens'), finlandia: L('Finlandia', 'Europe/Helsinki'), rumania: L('Rumanía', 'Europe/Bucharest'), bulgaria: L('Bulgaria', 'Europe/Sofia'), turquia: L('Turquía', 'Europe/Istanbul'), estambul: L('Turquía', 'Europe/Istanbul'), chipre: L('Chipre', 'Asia/Nicosia'), israel: L('Israel', 'Asia/Jerusalem'), egipto: L('Egipto', 'Africa/Cairo'), marruecos: L('Marruecos', 'Africa/Casablanca'), marrakech: L('Marruecos', 'Africa/Casablanca'),
+  'nueva york': L('Estados Unidos (Nueva York)', 'America/New_York'), miami: L('Estados Unidos (Miami)', 'America/New_York'), boston: L('Estados Unidos (Boston)', 'America/New_York'), washington: L('Estados Unidos (Washington)', 'America/New_York'), orlando: L('Estados Unidos (Orlando)', 'America/New_York'), chicago: L('Estados Unidos (Chicago)', 'America/Chicago'), texas: L('Estados Unidos (Texas)', 'America/Chicago'), denver: L('Estados Unidos (Denver)', 'America/Denver'), 'los angeles': L('Estados Unidos (Los Ángeles)', 'America/Los_Angeles'), 'san francisco': L('Estados Unidos (San Francisco)', 'America/Los_Angeles'), 'las vegas': L('Estados Unidos (Las Vegas)', 'America/Los_Angeles'), seattle: L('Estados Unidos (Seattle)', 'America/Los_Angeles'), hawai: L('Estados Unidos (Hawái)', 'Pacific/Honolulu'),
+  toronto: L('Canadá (Toronto)', 'America/Toronto'), montreal: L('Canadá (Montreal)', 'America/Toronto'), vancouver: L('Canadá (Vancouver)', 'America/Vancouver'), 'ciudad de mexico': L('México (Ciudad de México)', 'America/Mexico_City'), mexico: L('México', 'America/Mexico_City'), monterrey: L('México', 'America/Monterrey'), cancun: L('México (Cancún)', 'America/Cancun'), cuba: L('Cuba', 'America/Havana'), 'la habana': L('Cuba', 'America/Havana'), 'republica dominicana': L('República Dominicana', 'America/Santo_Domingo'), 'punta cana': L('República Dominicana', 'America/Santo_Domingo'), colombia: L('Colombia', 'America/Bogota'), bogota: L('Colombia', 'America/Bogota'), peru: L('Perú', 'America/Lima'), lima: L('Perú', 'America/Lima'), ecuador: L('Ecuador', 'America/Guayaquil'), venezuela: L('Venezuela', 'America/Caracas'), chile: L('Chile', 'America/Santiago'), santiago: L('Chile', 'America/Santiago'), argentina: L('Argentina', 'America/Argentina/Buenos_Aires'), 'buenos aires': L('Argentina', 'America/Argentina/Buenos_Aires'), uruguay: L('Uruguay', 'America/Montevideo'), 'sao paulo': L('Brasil (São Paulo)', 'America/Sao_Paulo'), 'rio de janeiro': L('Brasil (Río de Janeiro)', 'America/Sao_Paulo'),
+  japon: L('Japón', 'Asia/Tokyo'), tokio: L('Japón', 'Asia/Tokyo'), china: L('China', 'Asia/Shanghai'), pekin: L('China', 'Asia/Shanghai'), shanghai: L('China', 'Asia/Shanghai'), 'corea del sur': L('Corea del Sur', 'Asia/Seoul'), corea: L('Corea del Sur', 'Asia/Seoul'), seul: L('Corea del Sur', 'Asia/Seoul'), tailandia: L('Tailandia', 'Asia/Bangkok'), bangkok: L('Tailandia', 'Asia/Bangkok'), vietnam: L('Vietnam', 'Asia/Ho_Chi_Minh'), singapur: L('Singapur', 'Asia/Singapore'), filipinas: L('Filipinas', 'Asia/Manila'), bali: L('Indonesia (Bali)', 'Asia/Makassar'), india: L('India', 'Asia/Kolkata'), dubai: L('Emiratos Árabes Unidos', 'Asia/Dubai'), 'emiratos arabes': L('Emiratos Árabes Unidos', 'Asia/Dubai'), 'emiratos arabes unidos': L('Emiratos Árabes Unidos', 'Asia/Dubai'), sidney: L('Australia (Sídney)', 'Australia/Sydney'), sydney: L('Australia (Sídney)', 'Australia/Sydney'), melbourne: L('Australia (Melbourne)', 'Australia/Melbourne'), perth: L('Australia (Perth)', 'Australia/Perth'), 'nueva zelanda': L('Nueva Zelanda', 'Pacific/Auckland'),
+};
+// Más sitios: ciudades que se nombran a menudo. España (también para «estoy en Granada» = de vuelta), Portugal, Canarias, Europa,
+// América, Asia, África y Oceanía. Lo que no está aquí no se detecta: se puede decir «hora de Portugal»
+const MAS_LUGARES = [
+  [['granada', 'cordoba', 'zaragoza', 'alicante', 'murcia', 'valladolid', 'salamanca', 'santander', 'san sebastian', 'donostia', 'a coruna', 'la coruna', 'coruna', 'vigo', 'oviedo', 'gijon', 'pamplona', 'toledo', 'cadiz', 'almeria', 'huelva', 'jaen', 'leon', 'burgos', 'segovia', 'avila', 'caceres', 'badajoz', 'logrono', 'huesca', 'teruel', 'lleida', 'girona', 'tarragona', 'castellon', 'cuenca', 'merida', 'santiago de compostela', 'benidorm', 'marbella', 'ceuta', 'melilla', 'asturias', 'galicia', 'andalucia', 'cataluna', 'pais vasco', 'cantabria', 'navarra', 'aragon', 'extremadura'], 'España', 'Europe/Madrid'],
+  [['las palmas', 'santa cruz de tenerife', 'maspalomas', 'corralejo', 'puerto de la cruz'], 'Canarias', 'Atlantic/Canary'],
+  [['sintra', 'faro', 'coimbra', 'braga', 'cascais', 'porto', 'aveiro', 'evora', 'albufeira', 'lagos', 'nazare', 'guimaraes'], 'Portugal', 'Europe/Lisbon'],
+  [['glasgow', 'liverpool', 'oxford', 'cambridge', 'brighton', 'birmingham', 'bristol', 'belfast'], 'Reino Unido', 'Europe/London'],
+  [['niza', 'lyon', 'marsella', 'burdeos', 'toulouse', 'estrasburgo', 'montpellier', 'biarritz', 'normandia', 'provenza', 'corcega'], 'Francia', 'Europe/Paris'],
+  [['florencia', 'venecia', 'napoles', 'turin', 'bolonia', 'pisa', 'verona', 'sicilia', 'cerdena', 'toscana', 'vaticano'], 'Italia', 'Europe/Rome'],
+  [['munich', 'frankfurt', 'hamburgo', 'colonia', 'dusseldorf', 'stuttgart', 'dresde'], 'Alemania', 'Europe/Berlin'],
+  [['kioto', 'osaka'], 'Japón', 'Asia/Tokyo'],
+];
+// Uno a uno: [país que se enseña, zona]
+const MAS_SITIOS = {
+  brujas: ['Bélgica', 'Europe/Brussels'], amberes: ['Bélgica', 'Europe/Brussels'], luxemburgo: ['Luxemburgo', 'Europe/Luxembourg'], monaco: ['Mónaco', 'Europe/Monaco'], zurich: ['Suiza', 'Europe/Zurich'], ginebra: ['Suiza', 'Europe/Zurich'], salzburgo: ['Austria', 'Europe/Vienna'], cracovia: ['Polonia', 'Europe/Warsaw'], varsovia: ['Polonia', 'Europe/Warsaw'], eslovaquia: ['Eslovaquia', 'Europe/Bratislava'], bratislava: ['Eslovaquia', 'Europe/Bratislava'], eslovenia: ['Eslovenia', 'Europe/Ljubljana'], serbia: ['Serbia', 'Europe/Belgrade'], belgrado: ['Serbia', 'Europe/Belgrade'], bosnia: ['Bosnia', 'Europe/Sarajevo'], montenegro: ['Montenegro', 'Europe/Podgorica'], albania: ['Albania', 'Europe/Tirane'], dubrovnik: ['Croacia', 'Europe/Zagreb'], split: ['Croacia', 'Europe/Zagreb'], zagreb: ['Croacia', 'Europe/Zagreb'], estocolmo: ['Suecia', 'Europe/Stockholm'], copenhague: ['Dinamarca', 'Europe/Copenhagen'], oslo: ['Noruega', 'Europe/Oslo'], gibraltar: ['Gibraltar', 'Europe/Gibraltar'], rotterdam: ['Países Bajos', 'Europe/Amsterdam'],
+  helsinki: ['Finlandia', 'Europe/Helsinki'], tallin: ['Estonia', 'Europe/Tallinn'], estonia: ['Estonia', 'Europe/Tallinn'], riga: ['Letonia', 'Europe/Riga'], letonia: ['Letonia', 'Europe/Riga'], lituania: ['Lituania', 'Europe/Vilnius'], ucrania: ['Ucrania', 'Europe/Kyiv'], kiev: ['Ucrania', 'Europe/Kyiv'], bucarest: ['Rumanía', 'Europe/Bucharest'], sofia: ['Bulgaria', 'Europe/Sofia'], santorini: ['Grecia', 'Europe/Athens'], mykonos: ['Grecia', 'Europe/Athens'], creta: ['Grecia', 'Europe/Athens'],
+  'nueva orleans': ['Estados Unidos (Nueva Orleans)', 'America/Chicago'], filadelfia: ['Estados Unidos (Filadelfia)', 'America/New_York'], atlanta: ['Estados Unidos (Atlanta)', 'America/New_York'], houston: ['Estados Unidos (Houston)', 'America/Chicago'], dallas: ['Estados Unidos (Dallas)', 'America/Chicago'], 'san diego': ['Estados Unidos (San Diego)', 'America/Los_Angeles'], quebec: ['Canadá (Quebec)', 'America/Toronto'], 'costa rica': ['Costa Rica', 'America/Costa_Rica'], panama: ['Panamá', 'America/Panama'], guatemala: ['Guatemala', 'America/Guatemala'], 'puerto rico': ['Puerto Rico', 'America/Puerto_Rico'], jamaica: ['Jamaica', 'America/Jamaica'], bolivia: ['Bolivia', 'America/La_Paz'], 'la paz': ['Bolivia', 'America/La_Paz'], paraguay: ['Paraguay', 'America/Asuncion'], quito: ['Ecuador', 'America/Guayaquil'], montevideo: ['Uruguay', 'America/Montevideo'], caracas: ['Venezuela', 'America/Caracas'], medellin: ['Colombia', 'America/Bogota'], cusco: ['Perú', 'America/Lima'], 'machu picchu': ['Perú', 'America/Lima'], tulum: ['México (Tulum)', 'America/Cancun'], 'playa del carmen': ['México (Playa del Carmen)', 'America/Cancun'],
+  'hong kong': ['Hong Kong', 'Asia/Hong_Kong'], taiwan: ['Taiwán', 'Asia/Taipei'], hanoi: ['Vietnam', 'Asia/Ho_Chi_Minh'], phuket: ['Tailandia', 'Asia/Bangkok'], malasia: ['Malasia', 'Asia/Kuala_Lumpur'], 'kuala lumpur': ['Malasia', 'Asia/Kuala_Lumpur'], 'sri lanka': ['Sri Lanka', 'Asia/Colombo'], nepal: ['Nepal', 'Asia/Kathmandu'], maldivas: ['Maldivas', 'Indian/Maldives'], catar: ['Catar', 'Asia/Qatar'], qatar: ['Catar', 'Asia/Qatar'], doha: ['Catar', 'Asia/Qatar'], 'abu dabi': ['Emiratos Árabes Unidos', 'Asia/Dubai'], jordania: ['Jordania', 'Asia/Amman'], 'el cairo': ['Egipto', 'Africa/Cairo'],
+  kenia: ['Kenia', 'Africa/Nairobi'], sudafrica: ['Sudáfrica', 'Africa/Johannesburg'], 'ciudad del cabo': ['Sudáfrica', 'Africa/Johannesburg'], tanzania: ['Tanzania', 'Africa/Dar_es_Salaam'], zanzibar: ['Tanzania', 'Africa/Dar_es_Salaam'], tunez: ['Túnez', 'Africa/Tunis'], senegal: ['Senegal', 'Africa/Dakar'], 'cabo verde': ['Cabo Verde', 'Atlantic/Cape_Verde'],
+  auckland: ['Nueva Zelanda', 'Pacific/Auckland'],
+};
+// Lo que ya estaba en LUGARES manda
+for (const [nombres, pais, zona] of MAS_LUGARES) for (const n of nombres) if (!LUGARES[n]) LUGARES[n] = L(pais, zona);
+for (const [n, [pais, zona]] of Object.entries(MAS_SITIOS)) if (!LUGARES[n]) LUGARES[n] = L(pais, zona);
+// Países con varias zonas: se pregunta la ciudad
+// México: casi todo el país va con la hora de Ciudad de México (Cancún, aparte en LUGARES); se toma esa sin preguntar
+const MULTIZONA = { 'estados unidos': 'Estados Unidos', eeuu: 'Estados Unidos', 'ee uu': 'Estados Unidos', usa: 'Estados Unidos', canada: 'Canadá', brasil: 'Brasil', australia: 'Australia', rusia: 'Rusia', indonesia: 'Indonesia' };
+function buscarLugar(texto) {
+  const entero = sinSignos(texto ?? '').trim();
+  // Primero el nombre entero («las palmas», «la paz», «el cairo»); después sin el artículo («la india» → india)
+  for (const t of [entero, entero.replace(/^(?:la |el |los |las )/, '').trim()]) {
+    if (!t) continue;
+    if (LUGARES[t]) return { ...LUGARES[t] };
+    if (MULTIZONA[t]) return { multizona: MULTIZONA[t] };
+  }
+  return null;
+}
+// Diferencia con la hora de España en un instante, en minutos (positiva si allí es más tarde)
+function offsetZona(zona, fecha) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: zona, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(fecha);
+  const g = (t) => Number(p.find((x) => x.type === t).value);
+  return Math.round((Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'), g('second')) - fecha.getTime()) / 60000);
+}
+const difConEspana = (zona, fecha) => offsetZona(zona, fecha) - offsetZona(ZONA_ESPANA, fecha);
+function textoDiferencia(minutos) {
+  if (minutos === 0) return 'la misma hora que en España';
+  const a = Math.abs(minutos);
+  const h = Math.floor(a / 60);
+  const m = a % 60;
+  const cant = m === 0 ? (h === 1 ? 'una hora' : `${h} horas`) : h === 0 ? `${m} minutos` : `${h === 1 ? 'una hora' : `${h} horas`} y ${m === 30 ? 'media' : `${m} minutos`}`;
+  return `${cant} ${minutos < 0 ? 'menos' : 'más'} que en España`;
+}
+// «Estoy en Portugal», «me voy a Nueva York hasta el domingo», «he vuelto». Devuelve { tipo: 'vuelta' } | { tipo: 'lugar', pais, zona, hasta }
+// | { tipo: 'multizona', pais } | null
+const VUELTA_VIAJE = /^(?:ya )?(?:he vuelto|ya he vuelto|estoy de vuelta|he regresado|ya estoy en (?:espana|casa)|vuelvo a estar en espana|he llegado a espana|de vuelta en espana|ya en espana|vuelvo a la hora de espana)(?: ya)?$/;
+const ESTANCIA_VIAJE = /^(?:(?:hola|oye|pues|bueno|vale|por cierto)[ ,]+)?(?:ahora |ya )?(?:estoy|me encuentro|ando|sigo|me voy|me he ido|voy|me marcho|estare|estamos|llego|he llegado|acabo de llegar|me he venido)(?: de viaje| de vacaciones)? (?:en|a|por) (.+?)(?: hasta (.+))?$/;
+// La sección oculta de los viajes: solo sale si se pide, nunca en «dame todo»
+const LISTA_VIAJES = /^(?:(?:dame|dime|ensename|muestrame|pasame|ver|lista de|cuales son) )?(?:(?:mis|los|todos los|todos mis) )?(?:viajes|viajes planeados|viajes planificados|viajes que tengo|proximos viajes)(?: planeados| planificados| que tengo| apuntados)?$|^que viajes tengo(?: planeados| planificados| apuntados)?$|^(?:a )?donde me voy(?: de viaje)?$|^cuando me voy de viaje$/;
+const ESTADO_VIAJE = /^(?:donde estoy|en que pais estoy|en que zona horaria estoy|que zona horaria tengo|que hora tengo puesta|en que hora estoy)$/;
+// --- Viajes planeados y por tramos (base de datos) ---
+//   «el 20 me voy a Japón hasta el 30», «me voy a Japón del 20 al 30», «dentro de 3 días me voy a México», «me voy a Portugal mañana»
+//   «me quedo hasta dentro de 5 días y luego me voy a México (hasta el 15)», «luego me voy a México»
+// «Tengo un viaje a Francia del 8 al 10» y «viaje a Francia del 8 al 10» también (el modelo lo apuntaba como una cita de varios días)
+const VERBO_VIAJE = '(?:me voy|me ire|voy a ir|viajo|me marcho|voy a estar|estare|vuelo|me vuelvo a ir|nos vamos|vamos|tengo un viaje|tengo viaje|hay un viaje|un viaje|viaje)';
+// La fecha de delante es opcional y se prueba SIN ella primero (??): si no, «tengo un» o «me voy de» se tomaban por la fecha
+const PLAN_VIAJE = new RegExp(`^(?:(?:hola|oye|pues|bueno|vale|por cierto) )?(?:(.+?) )??${VERBO_VIAJE}(?: de viaje| de vacaciones)? (?:a|en|para) (.+)$`);
+const CADENA_VIAJE = new RegExp(`^(?:(?:pues|bueno|vale|oye) )?(?:me quedo|estare|sigo|voy a estar|estoy)(?: aqui| alli)? hasta (.+?)(?: y| pero|,)*(?: luego| despues| entonces| mas tarde)? ${VERBO_VIAJE} (?:a|para|hacia) (.+?)(?: hasta (.+))?$`);
+const LUEGO_VIAJE = new RegExp(`^(?:y )?(?:luego|despues|mas tarde|al acabar|cuando acabe) ${VERBO_VIAJE} (?:a|para|hacia) (.+?)(?: hasta (.+))?$`);
+const sumarDias = (fecha, n) => new Date(Date.parse(`${fecha}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const hoyEnZona = (zona, ahora) => new Intl.DateTimeFormat('en-CA', { timeZone: zona }).format(ahora);
+// El sitio y las fechas de detrás: «Japón del 20 al 30», «Japón hasta el 30», «Japón el 20», «Portugal mañana hasta el domingo»
+function sitioYFechas(resto, ahora) {
+  const formas = [
+    [/^(.+?) (?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+)$/, (r) => ({ sitio: r[1], desde: r[2], hasta: r[3] })],
+    [/^(.+?) ((?:el|este|el proximo|a partir del?|desde el|desde) .+?|dentro de .+?)(?: hasta (?:el )?(.+))?$/, (r) => ({ sitio: r[1], desde: r[2].replace(/^(?:a partir del?|desde el|desde) /, ''), hasta: r[3] })],
+    [/^(.+?) (manana|pasado manana|hoy)(?: hasta (?:el )?(.+))?$/, (r) => ({ sitio: r[1], desde: r[2], hasta: r[3] })],
+    [/^(.+?) hasta (?:el )?(.+)$/, (r) => ({ sitio: r[1], desde: null, hasta: r[2] })],
+    [/^(.+)$/, (r) => ({ sitio: r[1], desde: null, hasta: null })],
+  ];
+  for (const [re, f] of formas) {
+    const r = re.exec(resto);
+    if (!r) continue;
+    const x = f(r);
+    const lugar = buscarLugar(x.sitio.replace(/ (?:de viaje|de vacaciones|unos dias)$/, ''));
+    if (!lugar) continue;
+    // Con los dos extremos, el rango se resuelve junto («del 20 al 30 de diciembre»)
+    if (x.desde && x.hasta) {
+      const r = rangoViaje(x.desde, x.hasta, ahora);
+      if (!r.desde || !r.hasta) continue;
+      return { lugar, desde: r.desde, hasta: r.hasta, sitio: x.sitio };
+    }
+    const desde = x.desde ? parseHasta(x.desde, ahora) : null;
+    const hasta = x.hasta ? parseHasta(x.hasta, ahora) : null;
+    if ((x.desde && !desde?.fecha) || (x.hasta && !hasta?.fecha && !hasta?.no_se)) continue;
+    return { lugar, desde: desde?.fecha ?? null, hasta: hasta?.fecha ?? null };
+  }
+  return null;
+}
+// Irse de donde estás: «me voy mañana de Portugal», «mañana me voy de aquí», «me voy de Portugal el domingo», «vuelvo a España el 20»,
+// «mañana vuelvo a casa». Devuelve { tipo: 'salida', fecha, destino } (destino: { pais, zona } o null si no lo dice: se pregunta)
+const FECHA_SALIDA = '(manana|pasado manana|hoy|esta noche|el .+?|este .+?|dentro de .+?|en .+? dias?)';
+const SALIDA_VIAJE = new RegExp(`^(?:(?:pues|bueno|vale|oye) )?(?:${FECHA_SALIDA} )?(?:me voy|me marcho|salgo|me largo|nos vamos|me ire)(?: ya)?(?: ${FECHA_SALIDA})? (?:de|desde) (aqui|.+?)(?: ${FECHA_SALIDA})?(?: (?:a|para|hacia) (.+))?$`);
+const VUELTA_FECHA = new RegExp(`^(?:(?:pues|bueno|vale|oye) )?(?:${FECHA_SALIDA} )?(?:vuelvo|me vuelvo|regreso|volvemos|volvere)(?: a (?:espana|casa|mi casa|madrid|la peninsula))?(?: ${FECHA_SALIDA})?$`);
+const ES_ESPANA = /^(?:a |para |hacia )?(?:espana|casa|mi casa|madrid|la peninsula|peninsula)$/;
+const fechaSalida = (t, ahora) => (t ? parseHasta(t.replace(/^en (\S+ dias?)$/, 'dentro de $1').replace(/^esta noche$/, 'hoy'), ahora)?.fecha ?? null : null);
+function interpretarSalida(m, ahora) {
+  const v = VUELTA_FECHA.exec(m);
+  if (v && (v[1] || v[2])) {
+    const fecha = fechaSalida(v[1] ?? v[2], ahora);
+    return fecha ? { tipo: 'salida', fecha, destino: { pais: 'España', zona: ZONA_ESPANA } } : null;
+  }
+  const s = SALIDA_VIAJE.exec(m);
+  if (!s) return null;
+  const origen = s[3];
+  if (origen !== 'aqui' && !buscarLugar(origen)) return null; // «me voy de compras mañana» no es un viaje
+  const textoFecha = s[1] ?? s[2] ?? s[4] ?? 'hoy';
+  const fecha = fechaSalida(textoFecha, ahora);
+  if (!fecha) return null;
+  let destino = null;
+  if (s[5]) {
+    if (ES_ESPANA.test(s[5])) destino = { pais: 'España', zona: ZONA_ESPANA };
+    else {
+      const l = buscarLugar(s[5]);
+      if (!l || l.multizona) return null;
+      destino = { pais: l.pais, zona: l.zona };
+    }
+  }
+  return { tipo: 'salida', fecha, destino };
+}
+// Cancelar o cambiar un viaje apuntado: «cancela el viaje a Japón», «ya no me voy a Japón», «el viaje a Japón es del 21 al 28»,
+// «el viaje a Japón es hasta el 28», «cambia el viaje a Japón: desde el 22»
+const CANCELA_VIAJE = /^(?:(?:cancela|cancelame|borra|borrame|quita|quitame|anula|anulame|elimina)(?: el)? viaje (?:a|de|en|para) (.+)|ya no (?:me voy|voy|viajo|me ire)(?: de viaje)? (?:a|para) (.+)|al final no (?:me voy|voy|viajo) (?:a|para) (.+))$/;
+// Sin sitio («cancela el viaje», «ya no me voy de viaje»): el viaje sin destino, o el único planeado
+const CANCELA_VIAJE_SIN_SITIO = /^(?:(?:cancela|cancelame|borra|borrame|quita|quitame|anula|anulame|elimina)(?: el)? viaje|ya no me voy de viaje|al final no me voy de viaje|ya no tengo (?:el )?viaje)$/;
+const CAMBIA_VIAJE = /^(?:(?:cambia|cambiame|mueve|modifica|corrige)(?: el)? viaje (?:a|de|en|para) (.+?)|(?:el )?viaje (?:a|de|en|para) (.+?) (?:es|sera|va|ahora es|al final es))(?: ya)? (?:(?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+)|hasta (?:el )?(.+)|(?:desde|a partir de)(?: el|l)? (.+))$/;
+function interpretarCambioViaje(m, ahora) {
+  if (CANCELA_VIAJE_SIN_SITIO.test(m)) return { tipo: 'cancelar_viaje', pais: null, zona: null };
+  const c = CANCELA_VIAJE.exec(m);
+  if (c) {
+    const l = buscarLugar(c[1] ?? c[2] ?? c[3]);
+    // Un viaje por España se busca por su nombre («cancela el viaje a Barcelona»)
+    return l && !l.multizona ? { tipo: 'cancelar_viaje', pais: l.pais, zona: l.zona, ...(l.zona === ZONA_ESPANA ? { nombre: nombreDeSitio(c[1] ?? c[2] ?? c[3]) } : {}) } : null;
+  }
+  const k = CAMBIA_VIAJE.exec(m.replace(/ ?: ?/g, ' '));
+  if (!k) return null;
+  const l = buscarLugar(k[1] ?? k[2]);
+  if (!l || l.multizona) return null;
+  const f = (t) => (t ? parseHasta(t, ahora)?.fecha ?? false : null);
+  const desde = f(k[3] ?? k[6]);
+  const hasta = desde && (k[4] ?? k[5]) ? hastaDesde(desde, k[4] ?? k[5], ahora) ?? false : f(k[4] ?? k[5]);
+  if (desde === false || hasta === false || (!desde && !hasta)) return null;
+  return { tipo: 'cambiar_viaje', pais: l.pais, zona: l.zona, desde, hasta, ...(l.zona === ZONA_ESPANA ? { nombre: nombreDeSitio(k[1] ?? k[2]) } : {}) };
+}
+// Una frase de viaje que no sigue ninguna forma conocida («igual el finde me escapo a Oporto»): no va al modelo (no sabe de viajes y la apuntaba
+// como alarma); se contesta cómo decirlo. Solo con un verbo de viajar, un sitio de la tabla, sin hora de reloj y sin pedir apuntar nada
+const VERBO_VIAJE_SUELTO = /\b(?:me voy|me escapo|me escapare|viajo|viajare|me marcho|voy a ir|nos vamos|me ire|vuelo|volamos|me piro)\b/;
+const PIDE_APUNTAR = /\b(?:recuerdame|recuerda|apunta|apuntame|anota|anotame|ponme|pon|compra|comprar|reserva|reservar|tarea|alarma|cita|avisame|avisa)\b/;
+function viajeSinForma(m) {
+  if (!VERBO_VIAJE_SUELTO.test(m) || PIDE_APUNTAR.test(m) || diceHoraDeReloj(m)) return null;
+  const l = lugarEnMensaje(m);
+  return l && !l.dudoso ? { tipo: 'ayuda_viaje', pais: lugarCorto(l.pais), ...(l.zona === ZONA_ESPANA ? { espana: true } : {}) } : null;
+}
+// Las fechas delante del sitio: «tengo un viaje del 8 al 10 a Francia», «me voy del 8 al 10 a Francia», «del 8 al 10 me voy a
+// Francia», «me voy el 20 a Japón hasta el 30»
+const RANGO_ANTES = new RegExp(`^(?:(?:hola|oye|pues|bueno|vale|por cierto) )?${VERBO_VIAJE}(?: de viaje| de vacaciones)? (?:(?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+?)|(?:el|este|el proximo) (.+?)|(manana|pasado manana|dentro de .+?)) (?:a|en|para) (.+?)(?: hasta (?:el )?(.+))?$`);
+const RANGO_DELANTE = new RegExp(`^(?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+?)(?: ,)? ${VERBO_VIAJE}(?: de viaje| de vacaciones)? (?:a|en|para) (.+)$`);
+function planConFechasDelante(m, ahora) {
+  let desdeT = null;
+  let hastaT = null;
+  let sitio = null;
+  const a = RANGO_ANTES.exec(m);
+  const d = a ? null : RANGO_DELANTE.exec(m);
+  if (a) [desdeT, hastaT, sitio] = [a[1] ?? a[3] ?? a[4], a[2] ?? a[6] ?? null, a[5]];
+  else if (d) [desdeT, hastaT, sitio] = [d[1], d[2], d[3]];
+  else return null;
+  const lugar = buscarLugar(sitio);
+  if (!lugar) return null;
+  if (lugar.multizona) return { tipo: 'multizona', pais: lugar.multizona };
+  const { desde, hasta } = hastaT ? rangoViaje(desdeT, hastaT, ahora) : { desde: parseHasta(desdeT, ahora)?.fecha ?? null, hasta: null };
+  if (!desde || (hastaT && !hasta) || (hasta && hasta < desde)) return null;
+  if (lugar.zona === ZONA_ESPANA) return salidaOViajeNacional(desde, hasta, sitio);
+  return { tipo: 'plan', pais: lugar.pais, zona: lugar.zona, desde, hasta: hasta ?? null };
+}
+// Un viaje sin decir adónde: «tengo un viaje del 8 al 10», «me voy de viaje del 8 al 10», «del 8 al 10 me voy de viaje», «tengo un
+// viaje el 8 hasta el 10». Se apunta como viaje (hora de España) y se pregunta a dónde; si no contesta, se queda así
+const SIN_DESTINO = 'Viaje sin destino';
+const VIAJE_SIN_SITIO = /^(?:(?:hola|oye|pues|bueno|vale|por cierto) )?(?:tengo un viaje|tengo viaje|me voy de viaje|me voy de vacaciones|estare de viaje|voy a estar de viaje|un viaje|viaje)(?: de (?:trabajo|vacaciones|placer))? (?:(?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+)|(?:el|este|el proximo) (.+?) hasta (?:el )?(.+))$/;
+const VIAJE_SIN_SITIO_DELANTE = /^(?:del|desde el|desde) (.+?) (?:al|hasta el|hasta) (.+?)(?: ,)? (?:tengo un viaje|me voy de viaje|me voy de vacaciones|estare de viaje|estoy de viaje)$/;
+function viajeSinSitio(m, ahora) {
+  const r = VIAJE_SIN_SITIO.exec(m) ?? VIAJE_SIN_SITIO_DELANTE.exec(m);
+  if (!r) return null;
+  const desdeT = r[1] ?? r[3];
+  const hastaT = r[2] ?? r[4];
+  // Si la cola nombra un sitio («del 8 al 10 a Francia»), no es esto: lo trata planConFechasDelante
+  if (/ (?:a|en|para) [a-z]/.test(hastaT ?? '')) return null;
+  const { desde, hasta } = rangoViaje(desdeT, hastaT, ahora);
+  return desde && hasta && hasta >= desde ? { tipo: 'viaje_sin_destino', desde, hasta } : null;
+}
+function interpretarPlanViaje(m, ahora) {
+  const sinSitio = viajeSinSitio(m, ahora);
+  if (sinSitio) return sinSitio;
+  const delante = planConFechasDelante(m, ahora);
+  if (delante) return delante;
+  const cambio = interpretarCambioViaje(m, ahora);
+  if (cambio) return cambio;
+  const salida = interpretarSalida(m, ahora);
+  if (salida) return salida;
+  const c = CADENA_VIAJE.exec(m);
+  if (c) {
+    const f1 = parseHasta(c[1], ahora);
+    const lugar = buscarLugar(c[2]);
+    const f3 = c[3] ? parseHasta(c[3], ahora) : null;
+    if (f1?.fecha && lugar && !lugar.multizona && (!c[3] || f3?.fecha)) return { tipo: 'cadena', hasta: f1.fecha, siguiente: { pais: lugar.pais, zona: lugar.zona, desde: sumarDias(f1.fecha, 1), hasta: f3?.fecha ?? null } };
+  }
+  const l = LUEGO_VIAJE.exec(m);
+  if (l) {
+    const lugar = buscarLugar(l[1]);
+    const f = l[2] ? parseHasta(l[2], ahora) : null;
+    if (lugar && !lugar.multizona) return { tipo: 'luego', pais: lugar.pais, zona: lugar.zona, hasta: f?.fecha ?? null };
+  }
+  const p = PLAN_VIAJE.exec(m);
+  if (!p) return null;
+  const lead = p[1] ? parseHasta(p[1].replace(/^(?:el|del|desde el|desde|a partir del?) /, ''), ahora) : null;
+  if (p[1] && !lead?.fecha) return null;
+  const sf = sitioYFechas(p[2], ahora);
+  if (!sf || sf.lugar.multizona) return sf?.lugar.multizona ? { tipo: 'multizona', pais: sf.lugar.multizona } : null;
+  const desde = lead?.fecha ?? sf.desde;
+  if (!desde) return null; // sin fecha de inicio es «ya estoy allí»: lo trata la estancia de siempre
+  if (sf.hasta && sf.hasta < desde) return null;
+  // «Me voy a España mañana»: es volver; sin estar de viaje y con las dos fechas, un viaje por España
+  if (sf.lugar.zona === ZONA_ESPANA) return salidaOViajeNacional(desde, sf.hasta, sf.sitio);
+  return { tipo: 'plan', pais: sf.lugar.pais, zona: sf.lugar.zona, desde, hasta: sf.hasta };
+}
+// Sin estar de viaje, ir a un sitio de España («me voy a Valencia el finde», «estoy en Madrid», «esta tarde me voy a Madrid») no es un viaje: no
+// cambia la hora y el mensaje sigue su camino normal (al modelo). Lo usan Construir petición (para no saltarse el modelo) y Planificar
+// Un sitio de España con fecha de ida y de vuelta («tengo un viaje a Barcelona del 8 al 10»). Estando fuera es volver (la salida de
+// siempre); sin estar fuera, viajeQueAplica lo convierte en un viaje con la hora de España y el nombre del sitio
+const ACENTOS_SITIO = { cadiz: 'Cádiz', malaga: 'Málaga', cordoba: 'Córdoba', almeria: 'Almería', jaen: 'Jaén', leon: 'León', avila: 'Ávila', caceres: 'Cáceres', logrono: 'Logroño', castellon: 'Castellón', merida: 'Mérida', gijon: 'Gijón', aragon: 'Aragón', andalucia: 'Andalucía', cataluna: 'Cataluña', coruna: 'Coruña', sebastian: 'Sebastián', pais: 'País' };
+function nombreDeSitio(sitio) {
+  const PEQUENAS = new Set(['de', 'del', 'la', 'las', 'el', 'los', 'y']);
+  return sinSignos(sitio ?? '').replace(/^(?:la |el |los |las )/, '').split(' ').filter(Boolean)
+    .map((w, i) => ACENTOS_SITIO[w] ?? (i > 0 && PEQUENAS.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
+}
+function salidaOViajeNacional(desde, hasta, sitio) {
+  const salida = { tipo: 'salida', fecha: desde, destino: { pais: 'España', zona: ZONA_ESPANA } };
+  const nombre = nombreDeSitio(sitio);
+  if (!hasta || !nombre || ['Espana', 'España', 'Peninsula'].includes(nombre)) return salida;
+  return { ...salida, nacional: { pais: nombre, zona: ZONA_ESPANA, desde, hasta } };
+}
+// hayViaje es estar FUERA (con otra zona que la de España): durante un viaje por España o sin destino, «me voy a Valencia el
+// finde» o «estoy en Madrid» siguen sin ser un viaje (antes acababan el viaje antes de tiempo)
+function viajeQueAplica(orden, hayViaje) {
+  if (!orden || hayViaje) return orden;
+  // Un viaje por España con sus dos fechas: sin estar fuera, es un viaje (con la hora de España), nunca una cita
+  if (orden.tipo === 'salida' && orden.nacional) return { tipo: 'plan', ...orden.nacional };
+  const destinoEspana = (orden.tipo === 'lugar' && orden.zona === ZONA_ESPANA)
+    || (orden.tipo === 'salida' && orden.destino?.zona === ZONA_ESPANA)
+    || (orden.tipo === 'ayuda_viaje' && orden.espana === true);
+  return destinoEspana ? null : orden;
+}
+const ORDEN_APUNTAR_VIAJE = /^(?:(?:pon|ponme|apunta|apuntame|anota|anotame|guarda|guardame|mete|meteme)(?: (?:que|en la agenda que|en el calendario que))? )/;
+const CIERRE_APUNTAR_VIAJE = /(?: (?:y )?(?:apuntalo|apuntamelo|anotalo|anotamelo|guardalo|guardamelo|ponlo|ponmelo|porfa|por favor|gracias))+$/;
+const HORA_VIAJE = /(?: (?:y )?(?:(?:sale el vuelo|el vuelo sale|salgo|sale|saldre|me voy|vuelvo|volvere|regreso|llego|llegare|vuelve|vuelo|salimos|volvemos) (?:a las|sobre las|hacia las|a eso de las) \d{1,2}(?: \d{2})?(?: h| de la manana| de la tarde| de la noche)?|(?:a las|sobre las|hacia las|a eso de las) \d{1,2}(?: \d{2})?(?: h| de la manana| de la tarde| de la noche)?(?: (?:salgo|saldre|vuelvo|volvere|regreso|llego|llegare|salimos|volvemos|sale el vuelo))?))/g;
+function sinCharlaViaje(m) {
+  const sinHoras = m.replace(/\b(?:tngo|tego|tenog)\b/g, 'tengo').replace(/\bq\b/g, 'que').replace(HORA_VIAJE, '');
+  const limpio = sinHoras.replace(ORDEN_APUNTAR_VIAJE, '').replace(CIERRE_APUNTAR_VIAJE, '').replace(/ y$/, '').trim();
+  return { texto: limpio, horas: new RegExp(HORA_VIAJE.source).test(m) };
+}
+function interpretarViaje(mensaje, ahora) {
+  const m = sinSignos(mensaje ?? '');
+  // «Ponme en Budapest que el 1 de agosto me voy» es una nota en esa carpeta, no un viaje
+  if (NOTA_EN_CARPETA.test(sinSignos(String(mensaje ?? '').replace(/\s*:\s*/, ' que '))) && !NO_ES_CARPETA_NOTA.test(m.split(/ que | : /)[0])) return null;
+  if (!m || m.split(' ').length > 22) return null;
+  if (ESTADO_VIAJE.test(m)) return { tipo: 'estado' };
+  if (LISTA_VIAJES.test(m)) return { tipo: 'lista' };
+  if (VUELTA_VIAJE.test(m)) return { tipo: 'vuelta' };
+  const plan = interpretarPlanViaje(m, ahora);
+  if (plan) return plan;
+  // Con relleno alrededor: «pon que tengo un viaje del 8 al 10, a las 9 salgo y vuelvo a las 9, apúntalo». Un viaje nunca se
+  // apunta como cita: se quitan la orden de apuntar y las horas de salida o vuelta (el viaje solo guarda días) y se avisa de ello
+  const limpio = sinCharlaViaje(m);
+  if (limpio.texto && limpio.texto !== m) {
+    const planLimpio = interpretarPlanViaje(limpio.texto, ahora);
+    if (planLimpio && (['plan', 'viaje_sin_destino'].includes(planLimpio.tipo) || planLimpio.nacional)) return { ...planLimpio, ...(limpio.horas ? { horas: true } : {}) };
+  }
+  if (m.split(' ').length > 14) return viajeSinForma(m);
+  const e = ESTANCIA_VIAJE.exec(m);
+  if (!e) return viajeSinForma(m);
+  const sitio = e[1].replace(/ (?:de viaje|de vacaciones|unos dias|esta semana|este finde|este fin de semana)$/, '');
+  const lugar = buscarLugar(sitio);
+  if (!lugar) return viajeSinForma(m);
+  if (lugar.multizona) return { tipo: 'multizona', pais: lugar.multizona };
+  const hasta = e[2] ? parseHasta(e[2], ahora) : null;
+  return { tipo: 'lugar', pais: lugar.pais, zona: lugar.zona, hasta: hasta?.fecha ?? null };
+}
+// «Hasta el domingo», «el 15», «15 de noviembre», «una semana», «no lo sé». Devuelve { fecha: 'AAAA-MM-DD' } | { no_se: true } | null
+const MESES_VIAJE = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+const DIAS_VIAJE = { lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6, domingo: 0 };
+const NUMEROS_VIAJE = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, quince: 15 };
+const NO_SE_VIAJE = /^(?:pues )?(?:no (?:lo )?se|ni idea|no estoy segur[oa]|no (?:lo )?tengo claro|(?:todavia|aun) no (?:lo )?se|indefinido|sin fecha|no tengo fecha|no hay fecha|no se cuando)\b/;
+function parseHasta(texto, ahora) {
+  let t = sinSignos(texto ?? '');
+  if (!t) return null;
+  if (NO_SE_VIAJE.test(t) && t.split(' ').length <= 6) return { no_se: true };
+  // Todo el mensaje tiene que ser la fecha (con algún relleno): «mañana dentista a las 10» no es «hasta mañana»
+  t = t.replace(/^(?:pues |creo que |me quedo |estare |estare alli |vuelvo |regreso |me vuelvo |hasta |hasta el |hasta la |el |la )+/, '')
+    .replace(/ (?:mas o menos|creo|o asi|aproximadamente|incluido|inclusive|mas o menos creo)$/, '').trim();
+  const [y, mo, d] = new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_ESPANA }).format(ahora).split('-').map(Number);
+  const hoy = new Date(Date.UTC(y, mo - 1, d));
+  const fecha = (dt) => dt.toISOString().slice(0, 10);
+  const mas = (dias) => new Date(hoy.getTime() + dias * 86400000);
+  if (t === 'hoy') return { fecha: fecha(hoy) };
+  if (t === 'pasado manana') return { fecha: fecha(mas(2)) };
+  if (t === 'manana') return { fecha: fecha(mas(1)) };
+  if (/^(?:este )?(?:fin de semana|finde)$/.test(t)) return { fecha: fecha(mas(((7 - hoy.getUTCDay()) % 7) || 7)) };
+  const dia = /^(?:este |el proximo |proximo )?(lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?$/.exec(t);
+  if (dia) return { fecha: fecha(mas(((DIAS_VIAJE[dia[1]] - hoy.getUTCDay() + 7) % 7) || 7)) };
+  const dentro = /^(?:dentro de |en )?(?:unos |unas )?(\d+|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince) (dias?|semanas?|mes|meses)(?: mas)?$/.exec(t);
+  if (dentro) {
+    const n = /^\d+$/.test(dentro[1]) ? Number(dentro[1]) : NUMEROS_VIAJE[dentro[1]];
+    if (!(n > 0 && n <= 365)) return null;
+    if (/^mes/.test(dentro[2])) return { fecha: fecha(new Date(Date.UTC(y, mo - 1 + n, d))) };
+    return { fecha: fecha(mas(/^semana/.test(dentro[2]) ? n * 7 : n)) };
+  }
+  const barra = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/.exec(t);
+  const conMes = /^(?:dia )?(\d{1,2})(?: de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre))?(?: de (\d{4}))?$/.exec(t);
+  let dd = null;
+  let mm = null;
+  let aa = null;
+  if (barra) [dd, mm, aa] = [Number(barra[1]), Number(barra[2]), barra[3] ? Number(barra[3].length === 2 ? `20${barra[3]}` : barra[3]) : null];
+  else if (conMes) [dd, mm, aa] = [Number(conMes[1]), conMes[2] ? MESES_VIAJE[conMes[2]] : null, conMes[3] ? Number(conMes[3]) : null];
+  if (dd === null || dd < 1 || dd > 31) return null;
+  // «El 15» sin mes: este mes si aún no ha pasado; si no, el que viene
+  if (mm === null) mm = dd >= d ? mo : mo + 1;
+  if (mm < 1 || mm > 13) return null;
+  let cand = new Date(Date.UTC(aa ?? y, mm - 1, dd));
+  if (cand.getUTCDate() !== dd && mm !== 13) return null;
+  if (aa === null && cand < hoy) cand = new Date(Date.UTC(y + 1, mm - 1, dd));
+  return cand >= hoy ? { fecha: fecha(cand) } : null;
+}
+// El último día de un rango se cuenta a partir del primero: el día 9, «del 8 al 10» era del 8 del mes que viene al 10 de este
+// (acababa antes de empezar). Si sale antes que el primero y solo dice el día, pasa al mes siguiente del primero
+function hastaDesde(desde, hastaT, ahora) {
+  const h = parseHasta(hastaT, ahora);
+  if (!h?.fecha || !desde || h.fecha >= desde) return h?.fecha ?? null;
+  const solo = /^(?:el |la |hasta el |hasta )?(\d{1,2})$/.exec(sinSignos(hastaT));
+  if (!solo) return h.fecha;
+  const [y, mo] = desde.split('-').map(Number);
+  for (let k = 0; k < 2; k++) {
+    const c = new Date(Date.UTC(y, mo - 1 + k, Number(solo[1])));
+    if (c.getUTCDate() === Number(solo[1]) && c.toISOString().slice(0, 10) >= desde) return c.toISOString().slice(0, 10);
+  }
+  return h.fecha;
+}
+// El primer día de un rango con solo el día («del 20 al 30 de diciembre»): el mes del último día (o el anterior si el día es mayor)
+function desdeConMesDe(desdeT, hasta, ahora) {
+  const d = parseHasta(desdeT, ahora)?.fecha ?? null;
+  const solo = /^(?:el |la |del |desde el |desde )?(\d{1,2})$/.exec(sinSignos(desdeT ?? ''));
+  if (!solo || !hasta) return d;
+  const [y, mo, dh] = hasta.split('-').map(Number);
+  const dia = Number(solo[1]);
+  const c = new Date(Date.UTC(y, mo - 1 - (dia > dh ? 1 : 0), dia));
+  if (c.getUTCDate() !== dia) return d;
+  return c.toISOString().slice(0, 10);
+}
+// Un rango «del X al Y»: { desde, hasta } con cada uno resuelto según el otro
+function rangoViaje(desdeT, hastaT, ahora) {
+  const hastaSolo = parseHasta(hastaT, ahora)?.fecha ?? null;
+  const conMes = /[a-z]{3,}|\//.test(sinSignos(hastaT ?? '').replace(/^(?:el|la|hasta el|hasta)\s+/, ''));
+  const desde = conMes ? desdeConMesDe(desdeT, hastaSolo, ahora) : parseHasta(desdeT, ahora)?.fecha ?? null;
+  return { desde, hasta: desde ? hastaDesde(desde, hastaT, ahora) : hastaSolo };
+}
+const fechaViajeTexto = (f) => {
+  const p = new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).formatToParts(new Date(`${f}T12:00:00Z`));
+  const g = (t) => p.find((x) => x.type === t)?.value ?? '';
+  return `${g('weekday')} ${g('day')} de ${g('month')}`;
+};
+// La respuesta a una pregunta del viaje que dejó el código: «¿Hasta cuándo?», «¿En qué ciudad?», «¿hora de España o de Portugal?».
+// Lo que no se entiende no la contesta: sigue el camino normal y la pregunta se cierra como cualquier otra que se deja sin contestar.
+const ELIGE_ESPANA = /^(?:1|la 1|el 1|la primera|primera|espana|de espana|la de espana|hora de espana|en hora de espana|hora espanola|la espanola|madrid|peninsula|peninsular|la peninsular|hora peninsular)$/;
+const ELIGE_LOCAL = /^(?:2|la 2|el 2|la segunda|segunda|local|la local|hora local|aqui|de aqui|la de aqui|alli|la de alli|de alli|la de donde estoy|donde estoy)$/;
+const eligeLugar = (m) => { const l = buscarLugar(m.replace(/^(?:la |hora )?(?:de |del |en )/, '')); return l && !l.multizona ? l : null; };
+function respuestaViaje(mensaje, hilo, ahora) {
+  const t = motivoDelHilo(hilo);
+  if (!t || t.origen !== 'codigo') return null;
+  const m = sinSignos(mensaje ?? '');
+  if (!m) return null;
+  if (t.motivo === 'viaje_hasta') {
+    const h = parseHasta(mensaje, ahora);
+    return h ? { tipo: 'hasta', pais: typeof t.pais === 'string' ? t.pais : '', zona: typeof t.zona === 'string' ? t.zona : null, desde: typeof t.desde === 'string' ? t.desde : null, ...h } : null;
+  }
+  if (t.motivo === 'viaje_sin_destino' && typeof t.desde === 'string') {
+    if (NO_DICE_DESTINO.test(m)) return { tipo: 'sin_destino', no: true };
+    const l = eligeLugar(m.replace(/^(?:me voy |voy |a |para |hacia |en )+/, 'en '));
+    return l ? { tipo: 'sin_destino', destino: { pais: l.pais, zona: l.zona }, desde: t.desde, hasta: typeof t.hasta === 'string' ? t.hasta : null } : null;
+  }
+  if (t.motivo === 'coincidencias_viaje' && Array.isArray(t.ids)) {
+    const ids = t.ids.filter((x) => typeof x === 'string');
+    if (MANTENER_COINC.test(m)) return { tipo: 'coincidencias', quitar: [] };
+    if (QUITAR_TODAS_COINC.test(m)) return { tipo: 'coincidencias', quitar: ids };
+    const n = QUITAR_ALGUNAS_COINC.exec(m);
+    if (n) {
+      const nums = [...n[1].matchAll(/\d+/g)].map((x) => Number(x[0]));
+      const quitar = nums.filter((k) => k >= 1 && k <= ids.length).map((k) => ids[k - 1]);
+      return quitar.length > 0 ? { tipo: 'coincidencias', quitar } : null;
+    }
+    return null;
+  }
+  if (t.motivo === 'aviso_viaje' && typeof t.respuesta === 'string') {
+    const refs = t.refs && typeof t.refs === 'object' && !Array.isArray(t.refs) ? t.refs : {};
+    if (/^(?:si|vale|ok|okey|claro|dale|venga|hazlo|apuntala|apuntalo|ponla|ponlo|igualmente|si apuntala|si igualmente|de acuerdo|seguro|si seguro)$/.test(m)) return { tipo: 'aviso_viaje', si: true, respuesta: t.respuesta, refs };
+    if (/^(?:no|nop|mejor no|no gracias|dejalo|cancela|cancelala|olvidalo|no la apuntes)$/.test(m)) return { tipo: 'aviso_viaje', si: false };
+    return null;
+  }
+  if (t.motivo === 'viaje_destino' && typeof t.fecha === 'string') {
+    if (ES_ESPANA.test(m) || NO_SE_VIAJE.test(m)) return { tipo: 'destino', fecha: t.fecha, destino: { pais: 'España', zona: ZONA_ESPANA }, no_se: NO_SE_VIAJE.test(m) };
+    const l = eligeLugar(m.replace(/^(?:me voy |voy )?(?:a|para|hacia) /, 'en '));
+    return l ? { tipo: 'destino', fecha: t.fecha, destino: { pais: l.pais, zona: l.zona } } : null;
+  }
+  if (t.motivo === 'viaje_ciudad') {
+    const l = eligeLugar(m.replace(/^estoy en /, 'en '));
+    return l ? { tipo: 'lugar', pais: l.pais, zona: l.zona, hasta: null } : null;
+  }
+  if (t.motivo === 'zona_hora' && typeof t.respuesta === 'string' && typeof t.zona === 'string') {
+    // El plan con el que se preguntó; una pregunta de antes de la 84 no lo lleva: entonces, alarmas y citas a la hora de allí
+    const plan = t.plan && typeof t.plan.zona === 'string' ? t.plan : { zona: t.zona, lugar: lugarCorto(t.pais ?? ''), alarmas: 'preguntar', citas: 'preguntar', dias: 0 };
+    const base = { tipo: 'zona', respuesta: t.respuesta, zona: t.zona, plan, refs: t.refs && typeof t.refs === 'object' && !Array.isArray(t.refs) ? t.refs : {} };
+    // Entre dos sitios que no son España («¿de Portugal o de México?»): solo el número o el nombre de uno de ellos
+    const uno = plan.uno && typeof plan.uno.zona === 'string' && plan.uno.zona !== ZONA_ESPANA ? plan.uno : null;
+    if (uno) {
+      if (/^(?:1|la 1|el 1|la primera|primera)$/.test(m)) return { ...base, eleccion: 'espana' };
+      if (/^(?:2|la 2|el 2|la segunda|segunda)$/.test(m)) return { ...base, eleccion: 'local' };
+    } else {
+      if (ELIGE_ESPANA.test(m)) return { ...base, eleccion: 'espana' };
+      if (ELIGE_LOCAL.test(m)) return { ...base, eleccion: 'local' };
+    }
+    const l = eligeLugar(m);
+    if (l && l.zona === (uno ? uno.zona : ZONA_ESPANA)) return { ...base, eleccion: 'espana' };
+    if (l && l.zona === t.zona) return { ...base, eleccion: 'local' };
+    return null;
+  }
+  return null;
+}
+// «¿A dónde vas?» de un viaje sin destino: no querer decirlo también la contesta (se queda como viaje)
+const NO_DICE_DESTINO = /^(?:no lo se|no se|ni idea|no te lo digo|no quiero decirlo|prefiero no decirlo|da igual|no importa|a ningun sitio|secreto|es secreto|no|paso|dejalo asi|dejalo|nada)$/;
+// «¿Las mantienes?» de lo que coincide con un viaje
+const MANTENER_COINC = /^(?:si |vale |no )?(?:mantenlas|mantenlos|mantenla|mantenlo|dejalas|dejalos|dejala|dejalo|mantener|las mantengo|no las quites|no quites nada|no|todo bien|vale|ok|si)$/;
+const QUITAR_TODAS_COINC = /^(?:si |vale )?(?:quitalas|quitalos|quitala|quitalo|quita(?:las|los)? todas|quitalas todas|quitalos todos|borralas|borralos|borrala|borralo|eliminalas|eliminalos|cancelalas|cancelalos|quita todo|borra todo)$/;
+const QUITAR_ALGUNAS_COINC = /^(?:quita|quitame|borra|elimina|cancela)(?: la| el| las| los)? ((?:\d+)(?:(?: ?, ?| y )\d+)*)$/;
+const turnoViaje = (motivo, extra, texto) => JSON.stringify({ intencion: 'aclarar', motivo, origen: 'codigo', ...extra, pregunta: texto, items: [], respuesta_usuario: texto });
+// ¿El mensaje dice una hora de reloj? («a las 14», «14:30», «a las 9 de la noche»). Una hora relativa («en 20 minutos») no la dice
+const HORA_RELOJ = /\b(?:a|sobre|hacia|para|desde|de) las? \d{1,2}\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2} ?(?:h|hrs?)\b|\bmediodia\b|\bmedianoche\b/;
+const diceHoraDeReloj = (mensaje) => HORA_RELOJ.test(sinAcentos(String(mensaje ?? '')).replace(/\b(?:en|dentro de) (?:\d+|un|una|media) (?:horas?|minutos?|min)\b/g, ''));
+
+// --- La zona de cada alarma y cita ---
+// Una alarma o una cita puede ir en la hora de otro sitio: «alarma a las 19:00 para coger el avión en Lisboa» (lo nombra el mensaje),
+// «a las 19 hora de Portugal» (lo dice claro) o estando de viaje. Las alarmas guardan su zona (items.zona_alarma) y se escriben siempre a
+// su hora y en su zona, con el sitio entre paréntesis si no es Madrid. Nada se mueve solo al cambiar de sitio.
+const ADJETIVO_LUGAR = { espanola: 'espana', peninsular: 'espana', portuguesa: 'portugal', inglesa: 'reino unido', britanica: 'reino unido', irlandesa: 'irlanda', francesa: 'francia', italiana: 'italia', alemana: 'alemania', griega: 'grecia', turca: 'turquia', canaria: 'canarias', japonesa: 'japon', china: 'china', coreana: 'corea del sur', tailandesa: 'tailandia', india: 'india', marroqui: 'marruecos', argentina: 'argentina', chilena: 'chile', colombiana: 'colombia', peruana: 'peru', cubana: 'cuba', dominicana: 'republica dominicana' };
+const CLAVES_LUGAR = Object.keys(LUGARES).sort((a, b) => b.length - a.length);
+// Las expresiones se montan UNA vez (no en cada mensaje)
+const RE_LUGAR_EXPLICITO = CLAVES_LUGAR.map((k) => [k, new RegExp(`\\b(?:hora|horario)(?: local)? (?:de|en) (?:la |el )?${k}\\b`)]);
+const RE_LUGAR_NOMBRADO = CLAVES_LUGAR.map((k) => [k, new RegExp(`\\b(?:en|de|desde|a|para) (?:la |el )?${k}\\b`, 'g')]);
+// Nombres de la tabla que también son otra cosa («restaurante Roma», «Santiago» de Compostela, «la India» de un plato): con ellos se pregunta
+const LUGARES_DUDOSOS = new Set(['santiago', 'lima', 'roma', 'paris', 'china', 'india', 'malta', 'cuba', 'bali', 'texas', 'chile', 'corea', 'split', 'lagos', 'leon', 'la paz', 'sofia', 'florencia', 'cordoba', 'merida', 'granada']);
+// El sitio que nombra el mensaje junto a la hora: { zona, pais, explicita, dudoso } o null.
+//   explícito («hora de X», «horario de X», «hora local de X», «hora portuguesa», «hora española»): se usa sin preguntar.
+//   nombrado («en Lisboa», «de Tenerife»): también se usa sin preguntar («se intuye»), salvo si es dudoso: un nombre que también es
+//   otra cosa, o dos sitios con horas distintas («el vuelo de Lisboa a Tokio a las 19»; se pregunta por el primero).
+function lugarEnMensaje(mensaje) {
+  const m = ` ${sinSignos(mensaje ?? '')} `;
+  const adj = /\b(?:hora|horario) (espanola|peninsular|portuguesa|inglesa|britanica|irlandesa|francesa|italiana|alemana|griega|turca|canaria|japonesa|china|coreana|tailandesa|india|marroqui|argentina|chilena|colombiana|peruana|cubana|dominicana)\b/.exec(m);
+  if (adj) return { ...LUGARES[ADJETIVO_LUGAR[adj[1]]], explicita: true, dudoso: false };
+  for (const [k, re] of RE_LUGAR_EXPLICITO) if (re.test(m)) return { ...LUGARES[k], explicita: true, dudoso: false };
+  const vistos = [];
+  for (const [k, re] of RE_LUGAR_NOMBRADO) {
+    re.lastIndex = 0;
+    const r = re.exec(m);
+    // Una clave dentro de otra más larga ya vista («la palma» en «gran canaria»… o «santiago» en otro sitio) no cuenta dos veces
+    if (r && !vistos.some((v) => v.desde <= r.index && r.index < v.hasta)) vistos.push({ k, desde: r.index, hasta: r.index + r[0].length });
+  }
+  if (vistos.length === 0) return null;
+  vistos.sort((a, b) => a.desde - b.desde);
+  const primero = LUGARES[vistos[0].k];
+  const zonas = new Set(vistos.map((v) => LUGARES[v.k].zona));
+  return { ...primero, explicita: false, dudoso: LUGARES_DUDOSOS.has(vistos[0].k) || zonas.size > 1 };
+}
+// Las horas de reloj de lo que se va a guardar o cambiar, por clase: el aviso de una alarma (y el «cuando» de un cambio de tipo) y el inicio de
+// una cita. Solo fechas con hora: un día suelto no
+const conHora = (v) => typeof v === 'string' && v.includes('T') && Number.isFinite(Date.parse(v));
+function horasDe(datos) {
+  const alarmas = [];
+  const citas = [];
+  if (datos?.intencion === 'guardar' && Array.isArray(datos.items)) {
+    for (const it of datos.items) {
+      if (conHora(it.recordar_en)) alarmas.push(Date.parse(it.recordar_en));
+      if (conHora(it.fecha_inicio)) citas.push(Date.parse(it.fecha_inicio));
+    }
+  }
+  if (datos?.intencion === 'corregir' && datos.correccion) {
+    if (conHora(datos.correccion.cambios?.recordar_en)) alarmas.push(Date.parse(datos.correccion.cambios.recordar_en));
+    if (conHora(datos.correccion.cuando)) alarmas.push(Date.parse(datos.correccion.cuando));
+    if (conHora(datos.correccion.cambios?.fecha_inicio)) citas.push(Date.parse(datos.correccion.cambios.fecha_inicio));
+  }
+  return { alarmas, citas };
+}
+// «Hoy», «mañana» y «pasado mañana» los entiende el modelo con la fecha de España. Lejos (en Japón a las 7:00 aún es «ayer» en España) el
+// día de allí es otro: los días que hay que sumar para que «mañana» sea el de allí
+const DIA_RELATIVO = /\b(?:hoy|manana|pasado manana|esta noche|esta tarde|esta manana)\b/;
+function diasDeDiferencia(zona, ahora) {
+  const dia = (z) => Date.parse(`${new Intl.DateTimeFormat('en-CA', { timeZone: z }).format(ahora)}T00:00:00Z`);
+  return Math.round((dia(zona) - dia(ZONA_ESPANA)) / 86400000);
+}
+// Pasa las horas a la del sitio (misma hora de reloj; las 19:00 que el modelo entendió de Madrid pasan a las 19:00 de Lisboa) y, si hace falta,
+// los días. clase: 'alarmas' (aviso de alarma, «cuando» de un cambio de tipo) o 'citas' (inicio y fin)
+// La hora de reloj que dice el mensaje («a las 22:30», «21:00», «a las 9 de la noche»): 'HH:MM' o null
+function horaDicha(mensaje) {
+  // sin quitar los signos: los «:» de «22:30» hacen falta
+  const m = sinAcentos(String(mensaje ?? '')).toLowerCase().replace(/[¿?¡!,;()"«»]/g, ' ');
+  const r = /\b(?:a|sobre|hacia|para|desde) las? (\d{1,2})(?:[:.](\d{2})| y (media|cuarto))?\b/.exec(m) ?? /\b(\d{1,2})[:.](\d{2})\b/.exec(m);
+  if (!r) return null;
+  let h = Number(r[1]);
+  const min = r[2] ? Number(r[2]) : r[3] === 'media' ? 30 : r[3] === 'cuarto' ? 15 : 0;
+  if (/\bde la (?:tarde|noche)\b/.test(m) && h < 12) h += 12;
+  return h <= 24 && min < 60 ? `${String(h % 24).padStart(2, '0')}:${String(min).padStart(2, '0')}` : null;
+}
+// ¿El modelo ya pasó la hora a la del sitio? (tras «de Portugal» y otra pregunta, «a las 22:30» volvía al modelo, que la convertía
+// él a la de España, y el código la volvía a convertir: 23:30). Si la hora de reloj del sitio ya es la que dijo el usuario (sin mirar si es
+// mañana o tarde), no se mueve
+const yaEnLaZona = (ms, zona, dicha) => {
+  if (!dicha) return false;
+  const [h, m] = horaEn(zona, ms).split(':').map(Number);
+  const [hd, md] = dicha.split(':').map(Number);
+  return h % 12 === hd % 12 && m === md;
+};
+function aZona(datos, zona, clase, dias = 0, dicha = null) {
+  // Lo que se mueve el inicio (0 si el modelo ya la dio en la hora del sitio); el fin se mueve LO MISMO, para que la cita dure igual
+  const desplazamiento = (v) => {
+    const t = Date.parse(v) + dias * 86400000;
+    return dias * 86400000 + (yaEnLaZona(t, zona, dicha) ? 0 : -difConEspana(zona, new Date(t)) * 60000);
+  };
+  const mueve = (obj, ini, fin) => {
+    if (!obj) return;
+    const d = conHora(obj[ini]) ? desplazamiento(obj[ini]) : null;
+    if (d !== null) obj[ini] = new Date(Date.parse(obj[ini]) + d).toISOString();
+    if (fin && conHora(obj[fin])) obj[fin] = new Date(Date.parse(obj[fin]) + (d ?? desplazamiento(obj[fin]))).toISOString();
+  };
+  const [ini, fin] = clase === 'alarmas' ? ['recordar_en', null] : ['fecha_inicio', 'fecha_fin'];
+  if (datos.intencion === 'guardar') for (const it of datos.items) if (ini in it || (fin && fin in it)) mueve(it, ini, fin);
+  if (datos.intencion === 'corregir' && datos.correccion) {
+    mueve(datos.correccion.cambios, ini, fin);
+    if (clase === 'alarmas' && conHora(datos.correccion.cuando)) datos.correccion.cuando = new Date(Date.parse(datos.correccion.cuando) + desplazamiento(datos.correccion.cuando)).toISOString();
+  }
+}
+// Anota en las alarmas o en las citas su zona (o la quita: hora de España): items.zona_alarma y lugar_alarma (también
+// en las citas, aunque la columna se llame «alarma»). clase: 'alarmas' o 'citas'
+function marcarZona(datos, zona, lugar, clase) {
+  const z = zona && zona !== ZONA_ESPANA ? { zona_alarma: zona, lugar_alarma: lugar } : { zona_alarma: null, lugar_alarma: null };
+  const esDeLaClase = (it) => (clase === 'alarmas' ? it.tipo === 'tarea' && conHora(it.recordar_en) : it.tipo === 'evento' && conHora(it.fecha_inicio));
+  if (datos.intencion === 'guardar') for (const it of datos.items) if (esDeLaClase(it) && z.zona_alarma) Object.assign(it, z);
+  if (datos.intencion === 'corregir' && datos.correccion) {
+    const c = datos.correccion;
+    const toca = clase === 'alarmas' ? conHora(c.cambios?.recordar_en) || conHora(c.cuando) : conHora(c.cambios?.fecha_inicio);
+    if (toca) Object.assign(c.cambios, z);
+  }
+}
+const marcarZonaAlarmas = (datos, zona, lugar) => marcarZona(datos, zona, lugar, 'alarmas');
+// Qué hacer con las horas de este mensaje. Devuelve null (todo en hora de España, como siempre) o
+// { zona, lugar, alarmas, citas, dias }: alarmas/citas = 'local' (a la hora del sitio), 'espana' o 'preguntar'.
+//   1. «hora de España/española» → España; «hora de Portugal», «hora portuguesa» → esa zona. Sin preguntar.
+//   2. Nombra un sitio («el vuelo en Lisboa», «en Tenerife») → la hora de ese sitio, sin preguntar; si es dudoso, se pregunta.
+//   3. Cambia la hora de algo que ya tiene zona («muévela a las 20») → en SU zona (Madrid si no tiene), sin preguntar.
+//   4. De viaje en otra hora: las alarmas, a la hora de allí; las citas también, salvo si el viaje no tiene fecha de vuelta: se pregunta.
+// opciones: { viaje: {zona, pais, hasta} | null (solo si allí hay otra hora), zonasCorregidas: [{zona, lugar}] de lo que se cambia (null = Madrid) }
+function planearZona(datos, mensaje, ahora, opciones = {}) {
+  const { alarmas, citas } = horasDe(datos);
+  if (alarmas.length + citas.length === 0 || !diceHoraDeReloj(mensaje)) return null;
+  const viaje = opciones.viaje ?? null;
+  const conDias = (zona) => (viaje && zona === viaje.zona && DIA_RELATIVO.test(sinSignos(mensaje)) ? diasDeDiferencia(zona, ahora) : 0);
+  const otraHora = (zona) => { try { return difConEspana(zona, ahora) !== 0; } catch (e) { return false; } };
+  const ESPANA = { zona: ZONA_ESPANA, lugar: 'España', alarmas: 'espana', citas: 'espana', dias: 0 };
+  const lugar = lugarEnMensaje(mensaje);
+  if (lugar && lugar.zona === ZONA_ESPANA && !lugar.dudoso) return ESPANA;
+  if (lugar && lugar.zona !== ZONA_ESPANA && otraHora(lugar.zona)) {
+    const modo = lugar.explicita || !lugar.dudoso ? 'local' : 'preguntar';
+    return { zona: lugar.zona, lugar: lugarCorto(lugar.pais), alarmas: modo, citas: modo, dias: conDias(lugar.zona) };
+  }
+  const corregidas = opciones.zonasCorregidas ?? [];
+  if (datos.intencion === 'corregir' && corregidas.length > 0) {
+    const zonas = new Set(corregidas.map((z) => z?.zona ?? ZONA_ESPANA));
+    if (zonas.size === 1) {
+      const z = corregidas[0];
+      if (!z?.zona || z.zona === ZONA_ESPANA) return ESPANA;
+      return { zona: z.zona, lugar: z.lugar, alarmas: 'local', citas: 'local', dias: conDias(z.zona) };
+    }
+  }
+  // Otro tramo: si la hora cae en un viaje planeado a otro sitio, o después de que acabe el viaje actual (ya en España), se pregunta
+  // entre el sitio en el que estás y el de ese día
+  const h0 = alarmas[0] ?? citas[0];
+  const actual = viaje ? { zona: viaje.zona, lugar: lugarCorto(viaje.pais) } : { zona: ZONA_ESPANA, lugar: 'España' };
+  const diaEn = (zona) => hoyEnZona(zona, new Date(h0));
+  const tramo = (opciones.tramos ?? []).find((t) => t && !t.actual && typeof t.desde === 'string' && diaEn(t.zona) >= t.desde && (!t.hasta || diaEn(t.zona) <= t.hasta));
+  const finViaje = opciones.viajeActual?.hasta && diaEn(opciones.viajeActual.zona) > opciones.viajeActual.hasta ? { zona: ZONA_ESPANA, lugar: 'España' } : null;
+  const otro = tramo ? { zona: tramo.zona, lugar: lugarCorto(tramo.pais) } : finViaje;
+  const mismaHora = (a, b) => { try { return offsetZona(a, new Date(h0)) === offsetZona(b, new Date(h0)); } catch (e) { return true; } };
+  if (otro && otro.zona !== actual.zona && !mismaHora(otro.zona, actual.zona)) {
+    // Delante de la pregunta, el aviso del viaje: «Ese día ya estarás en Japón (te vas el …).» / «Ese día ya habrás vuelto a España…»
+    const aviso = tramo
+      ? `Ese día ya estarás en ${lugarCorto(tramo.pais)} (${tramo.desde === diaEn(tramo.zona) ? 'te vas ese mismo día' : `te vas el ${fechaViajeTexto(tramo.desde)}`}).`
+      : `Ese día ya habrás vuelto a España (estás en ${actual.lugar} hasta el ${fechaViajeTexto(opciones.viajeActual.hasta)}).`;
+    // La opción 1 es siempre España si uno de los dos lo es (así vale «España» como respuesta)
+    if (otro.zona === ZONA_ESPANA) return { zona: actual.zona, lugar: actual.lugar, alarmas: 'preguntar', citas: 'preguntar', dias: conDias(actual.zona), aviso };
+    return { zona: otro.zona, lugar: otro.lugar, ...(actual.zona === ZONA_ESPANA ? {} : { uno: actual }), alarmas: 'preguntar', citas: 'preguntar', dias: conDias(actual.zona), aviso };
+  }
+  if (viaje) return { zona: viaje.zona, lugar: lugarCorto(viaje.pais), alarmas: 'local', citas: viaje.hasta ? 'local' : 'preguntar', dias: conDias(viaje.zona) };
+  return null;
+}
+// Una cita para unas fechas en que estarás de viaje en un sitio con la MISMA hora: solo si el viaje no es el actual (apuntas desde
+// aquí una cita para cuando estarás fuera: puede chocar). Devuelve el tramo o null. Las alarmas no preguntan
+function viajeDeLaCita(datos, tramos, zonaActual) {
+  const { citas } = horasDe(datos);
+  for (const ms of citas) {
+    const t = (Array.isArray(tramos) ? tramos : []).find((x) => {
+      if (!x || x.actual || typeof x.desde !== 'string') return false;
+      const dia = hoyEnZona(x.zona, new Date(ms));
+      return dia >= x.desde && (!x.hasta || dia <= x.hasta);
+    });
+    if (!t) continue;
+    try {
+      if (offsetZona(t.zona, new Date(ms)) === offsetZona(zonaActual, new Date(ms))) return t;
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+// ¿Hay que preguntar? Solo si alguna clase que se pregunta tiene horas
+function hayQuePreguntar(plan, datos) {
+  if (!plan) return false;
+  const { alarmas, citas } = horasDe(datos);
+  return (plan.alarmas === 'preguntar' && alarmas.length > 0) || (plan.citas === 'preguntar' && citas.length > 0);
+}
+// Aplica el plan (con la elección del usuario si se preguntó). Devuelve la primera hora movida o preguntada, para la línea de las dos horas
+function aplicarPlanZona(datos, plan, eleccion, dicha = null) {
+  const modo = (m) => (m === 'preguntar' ? eleccion : m);
+  const { alarmas: hA } = horasDe(datos);
+  const modoAlarmas = modo(plan.alarmas);
+  const modoCitas = modo(plan.citas);
+  const { citas: hC } = horasDe(datos);
+  // «espana» es la opción 1: España, o el sitio en el que estás si se preguntó entre dos sitios de fuera (plan.uno)
+  const uno = plan.uno && plan.uno.zona !== ZONA_ESPANA ? plan.uno : null;
+  const aplicar = (modoClase, clase, horas) => {
+    if (horas.length === 0) return;
+    const destino = modoClase === 'local' ? { zona: plan.zona, lugar: plan.lugar } : modoClase === 'espana' && uno ? uno : null;
+    if (destino) {
+      aZona(datos, destino.zona, clase, plan.dias, dicha);
+      marcarZona(datos, destino.zona, destino.lugar, clase);
+    } else if (modoClase === 'espana') marcarZona(datos, null, null, clase);
+  };
+  aplicar(modoCitas, 'citas', hC);
+  aplicar(modoAlarmas, 'alarmas', hA);
+  const despues = horasDe(datos);
+  return despues.alarmas[0] ?? despues.citas[0] ?? null;
+}
+// El plan que ya se decidió en este hilo: el que llevó una pregunta posterior (zona_plan, con la elección) o la pregunta de la hora con el «1»/«2»
+// que la siguió. Si después hubo otra pregunta (un día ocupado…) y su «sí» vuelve al modelo, se aplica lo mismo sin preguntar
+function planDelHilo(hilo, ahora) {
+  const h = Array.isArray(hilo) ? hilo : [];
+  for (let k = h.length - 1; k >= 0; k--) {
+    if (h[k]?.rol !== 'model') continue;
+    let t = null;
+    try {
+      t = JSON.parse(h[k].texto);
+    } catch (e) {
+      continue;
+    }
+    if (t?.zona_plan && typeof t.zona_plan.zona === 'string') return { plan: t.zona_plan, eleccion: t.zona_plan.eleccion ?? null };
+    if (t?.motivo === 'zona_hora' && h[k + 1]?.rol === 'user') {
+      const r = respuestaViaje(h[k + 1].texto, h.slice(0, k + 1), ahora);
+      if (r?.tipo === 'zona') return { plan: r.plan, eleccion: r.eleccion };
+    }
+  }
+  return null;
+}
+const lugarCorto = (pais) => { const p = /\(([^)]+)\)\s*$/.exec(String(pais ?? '')); return p ? p[1] : String(pais ?? ''); };
+const horaEn = (zona, ms) => new Intl.DateTimeFormat('es-ES', { timeZone: zona, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms));
+function textoZonaHora(sitio, ms, uno = null) {
+  if (uno && uno.zona !== ZONA_ESPANA) {
+    const en = (z) => horaEn(ZONA_ESPANA, ms - difConEspana(z, new Date(ms)) * 60000);
+    const a = lugarCorto(uno.pais ?? uno.lugar);
+    const b = lugarCorto(sitio.pais);
+    return `¿Las ${horaEn(ZONA_ESPANA, ms)} de ${a} o de ${b}?\n1. De ${a} (en España serán las ${en(uno.zona)})\n2. De ${b} (en España serán las ${en(sitio.zona)})`;
+  }
+  const espana = sitio.zona === 'Atlantic/Canary' ? 'la Península' : 'España';
+  const alli = lugarCorto(sitio.pais);
+  const local = ms - difConEspana(sitio.zona, new Date(ms)) * 60000;
+  return `¿Las ${horaEn(ZONA_ESPANA, ms)} de ${espana} o de ${alli}?\n1. De ${espana} (allí serán las ${horaEn(sitio.zona, ms)})\n2. De ${alli} (en ${espana} serán las ${horaEn(ZONA_ESPANA, local)})`;
+}
+// Cómo se escribe la hora de una alarma: a su hora y en su zona; con el sitio entre paréntesis si no es Madrid (decisión del usuario)
+function horaDeAlarma(iso, zona, lugar) {
+  const z = typeof zona === 'string' && zona !== '' ? zona : ZONA_ESPANA;
+  try {
+    return z === ZONA_ESPANA ? horaEn(ZONA_ESPANA, Date.parse(iso)) : `${horaEn(z, Date.parse(iso))} (${String(lugar || z).replace(/[*_~`]/g, '')})`;
+  } catch (e) {
+    return horaEn(ZONA_ESPANA, Date.parse(iso));
+  }
+}
+
+// --- «Ponlo en Budapest» sin citar nada, justo después de mandar fotos ---
 // Vale para el último lote de archivos que llegaron seguidos y siguen sin sitio (lote: sus referencias, lo calcula «Construir petición»).
 // Solo con un verbo de guardar y un sitio; si el sitio suena a una lista o a la agenda («ponlo en la lista de la compra») no es una carpeta.
 const VERBO_ULTIMO_LOTE = '(?:ponlo|ponla|ponlos|ponlas|pon|ponmelo|ponmela|ponmelos|ponmelas|guardalo|guardala|guardalos|guardalas|guarda|guardamelo|guardamela|guardamelos|guardamelas|metelo|metela|metelos|metelas|mete|metemelo|metemela|metemelos|metemelas|muevelo|muevela|muevelos|muevelas|archivalo|archivala|archivalos|archivalas|archiva|llevalo|llevala|llevalos|llevalas|dejalo|dejala|dejalos|dejalas)';
@@ -1677,7 +2557,7 @@ const MAX_OPCIONES_CARPETA = 4;
 const rangoParecido = (a, b) => (clavesIguales(a, b) ? 0 : palabrasCarpeta(a).length === palabrasCarpeta(b).length ? 1 : 2);
 function revisarCarpetaPedida(ruta, conocidas) {
   // Una sola por ruta sin mayúsculas ni tildes («Viajes/Budapest» y «viajes/Budapest» de archivos antiguos): la primera, que es la de Drive
-  // (Construir petición las ordena así; sección 77)
+  // (Construir petición las ordena así)
   const vistas = new Set();
   const lista = (Array.isArray(conocidas) ? conocidas : []).map((c) => (typeof c === 'string' ? c : c?.ruta)).filter((r) => typeof r === 'string' && segmentosCarpeta(r) && !vistas.has(sinAcentos(r)) && vistas.add(sinAcentos(r)));
   if (lista.length === 0 || typeof ruta !== 'string') return { ruta };
@@ -1716,11 +2596,11 @@ function planMoverArchivos(pedido, conocidas) {
     origen = porTramo[0] ?? null;
   }
   if (!origen) return { texto: `No tengo ${que} guardad${pedido.solo_fotos ? 'as' : 'os'} en «${limpiarTxt(pedido.origen)}».` };
-  // Se escribe como en Drive («Viajes/Budapest», no «viajes/Budapest» de archivos antiguos; sección 78). Los cambios ya cogen todas las variantes.
+  // Se escribe como en Drive («Viajes/Budapest», no «viajes/Budapest» de archivos antiguos). Los cambios ya cogen todas las variantes.
   origen = filas.find((c) => sinAcentos(c.ruta) === sinAcentos(origen))?.ruta ?? origen;
   if (!pedido.destino) return { texto: `¿Adónde? Dime, por ejemplo: «mueve ${pedido.solo_fotos ? 'las' : 'los'} ${que} de ${limpiarTxt(origen)} a Viajes/${limpiarTxt(ultimoTramo(origen))}».` };
   // El destino: si existe, como está escrito; si es el último tramo de UNA sola carpeta («Budapest» y solo existe «Viajes/Budapest»), esa
-  // (sección 77: no tiene sentido preguntar); si no existe pero se parece a otra, se dice (no se crea a ciegas una casi repetida)
+  // (no tiene sentido preguntar); si no existe pero se parece a otra, se dice (no se crea a ciegas una casi repetida)
   let destinoPedido = pedido.destino;
   if (!filas.some((c) => sinAcentos(c.ruta) === sinAcentos(destinoPedido)) && !destinoPedido.includes('/')) {
     const vistos = new Set();
@@ -1971,6 +2851,10 @@ function interpretarComando(mensaje, { ahora, nombre } = {}) {
       const q = /^(?:quitar|quita|borrar|borra|eliminar|elimina|olvida|olvidar) (\d{1,2})$/.exec(arg);
       return q ? { tipo: 'horario', accion: 'quitar', n: Number(q[1]) } : { tipo: 'horario', accion: 'ver', pista: true };
     }
+    case 'trip':
+      return { tipo: 'viaje' };
+    case 'trips':
+      return { tipo: 'viajes' };
     case 'manual': {
       if (arg === '') return { tipo: 'texto', mensajes: [textoManualIndice()], motivo: 'manual' };
       if (arg === 'todo' || arg === 'todos' || arg === 'completo') {
@@ -2123,6 +3007,10 @@ function tipoDePregunta(fila) {
   if (motivo === 'oferta') return 'oferta';
   if (motivo === 'carpeta_parecida') return 'carpeta';
   if (motivo === 'sugerencia') return 'sugerencia';
+  if (motivo === 'viaje_hasta' || motivo === 'viaje_ciudad' || motivo === 'zona_hora' || motivo === 'viaje_destino') return motivo;
+  if (motivo === 'aviso_viaje') return 'sino';
+  if (motivo === 'coincidencias_viaje') return 'coincidencias';
+  if (motivo === 'viaje_sin_destino') return 'viaje_sin_destino';
   if (motivo === 'convertir_hora' || motivo === 'solape') return 'cuando';
   const texto = sinAcentos(fila.pregunta);
   if (/alarma/.test(texto) && /cita/.test(texto) && /tarea/.test(texto)) return 'tipo';
@@ -2149,7 +3037,13 @@ const OFERTA_ACEPTA = {
 const ELIGE_CARPETA = { test: (m) => /^(?:\d|la \d|el \d|opcion \d|numero \d|primera|segunda|tercera|cuarta|quinta|si|vale|ahi|esa|en esa|crea|creala|crear|nueva|una nueva|otra|no|dejalo|nada|cancela)\b/.test(m) || m.split(' ').filter(Boolean).length <= 3 };
 // Una propuesta concreta : un sí o un no cortos, o repetir el principio de la orden («mueve los archivos»)
 const RESPONDE_SUGERENCIA = { test: (m) => { const p = m.split(' ').filter(Boolean); return RECHAZA_SUGERENCIA.test(m) || (p.length <= 5 && p.every((w) => PALABRAS_ACEPTA.has(w))) || /^(?:mueve|mover|pasa|pasar|junta|juntar|mete|meter)\b/.test(m); } };
-const RESPONDE = { sino: RESPONDE_SINO, cuando: CUANDO, tipo: ELIGE_TIPO, eleccion: ELIGE_REPETIDO, oferta: OFERTA_ACEPTA, carpeta: ELIGE_CARPETA, sugerencia: RESPONDE_SUGERENCIA };
+// Viajes: una fecha («hasta el domingo», «no lo sé»), una ciudad de la tabla, o «1»/«2»/«España»/el país
+const RESPONDE_VIAJE_HASTA = { test: (m) => parseHasta(m, new Date()) !== null };
+const RESPONDE_VIAJE_CIUDAD = { test: (m) => eligeLugar(m.replace(/^estoy en /, 'en ')) !== null };
+const RESPONDE_ZONA_HORA = { test: (m) => ELIGE_ESPANA.test(m) || ELIGE_LOCAL.test(m) || eligeLugar(m) !== null };
+// «¿A dónde vas?»: España/casa, un sitio de la tabla o «no lo sé»
+const RESPONDE_VIAJE_DESTINO = { test: (m) => ES_ESPANA.test(m) || NO_SE_VIAJE.test(m) || eligeLugar(m.replace(/^(?:me voy |voy )?(?:a|para|hacia) /, 'en ')) !== null };
+const RESPONDE = { sino: RESPONDE_SINO, cuando: CUANDO, tipo: ELIGE_TIPO, eleccion: ELIGE_REPETIDO, oferta: OFERTA_ACEPTA, carpeta: ELIGE_CARPETA, sugerencia: RESPONDE_SUGERENCIA, viaje_hasta: RESPONDE_VIAJE_HASTA, viaje_ciudad: RESPONDE_VIAJE_CIUDAD, zona_hora: RESPONDE_ZONA_HORA, viaje_destino: RESPONDE_VIAJE_DESTINO, coincidencias: { test: (m) => MANTENER_COINC.test(m) || QUITAR_TODAS_COINC.test(m) || QUITAR_ALGUNAS_COINC.test(m) }, viaje_sin_destino: { test: (m) => NO_DICE_DESTINO.test(m) || eligeLugar(m.replace(/^(?:me voy |voy |a |para |hacia |en )+/, 'en ')) !== null } };
 // Si el mensaje no encaja con ninguna, solo se toma como respuesta a la más reciente si esta admite cualquier cosa (una pregunta libre, una
 // hora o una elección). A una confirmación o a «¿alarma, cita o tarea?» no la contesta algo que no encaja: es otra cosa.
 const ACEPTA_CUALQUIERA = new Set(['libre', 'cuando', 'eleccion']);
@@ -2162,6 +3056,8 @@ function elegirPregunta(mensaje, abiertas) {
   if (filas.length === 0) return null;
   const m = sinSignos(mensaje ?? '');
   const esOrden = ORDEN_NUEVA.test(m) && !SI_NO.test(m);
+  // «quita la 2» / «quítalas» empiezan como una orden, pero contestan a «¿Las mantienes?» de un viaje
+  if (esOrden && filas.some((f) => tipoDePregunta(f) === 'coincidencias' && RESPONDE.coincidencias.test(m))) return filas.find((f) => tipoDePregunta(f) === 'coincidencias' && RESPONDE.coincidencias.test(m));
   if (esOrden) return filas.find((f) => tipoDePregunta(f) === 'libre') ?? filas.find((f) => tipoDePregunta(f) === 'oferta' && OFERTA_ACEPTA.test(m)) ?? filas.find((f) => tipoDePregunta(f) === 'carpeta' && CREA_NUEVA.test(m)) ?? null;
   return filas.find((f) => RESPONDE[tipoDePregunta(f)]?.test(m)) ?? (ACEPTA_CUALQUIERA.has(tipoDePregunta(filas[0])) ? filas[0] : null);
 }
@@ -2442,7 +3338,8 @@ function limiteAlarmas(ahora) {
 
 // Si el usuario dice «cita» o «en el calendario», es una cita aunque empiece enseguida: se respeta su palabra
 const PIDE_CITA = /\b(citas?|calendario)\b/;
-function eventosAAlarmas(datos, ahora, meta, mensaje = '') {
+// zona: la de una cita puesta en la hora de otro sitio; la alarma en la que se convierte se escribe en esa zona
+function eventosAAlarmas(datos, ahora, meta, mensaje = '', zona = null) {
   if (datos.intencion !== 'guardar') return;
   if (PIDE_CITA.test(sinAcentos(mensaje))) return;
   const limite = limiteAlarmas(ahora);
@@ -2452,7 +3349,7 @@ function eventosAAlarmas(datos, ahora, meta, mensaje = '') {
     const ini = Date.parse(it.fecha_inicio);
     if (!(ini > ahora.getTime() && ini <= limite)) return it;
     convertidos.push(it.titulo);
-    return { ...it, tipo: 'tarea', recordar_en: it.fecha_inicio, fecha_inicio: null, fecha_fin: null, fecha_limite: null };
+    return { ...it, tipo: 'tarea', recordar_en: it.fecha_inicio, fecha_inicio: null, fecha_fin: null, fecha_limite: null, ...(zona && zona.zona !== ZONA_ESPANA ? { zona_alarma: zona.zona, lugar_alarma: zona.lugar } : {}) };
   });
   if (convertidos.length > 0) meta.alarmas = convertidos;
 }
@@ -2540,7 +3437,7 @@ function proyectosNuevos(datos, config) {
 // «Ya lo tengo apuntado como tarea: «Ir a comprar» (mié 21).» (tipoSuelto con el mismo tipo)
 function textoYaApuntado({ actual, titulo, item }) {
   const iso = actual === 'cita' ? item.fecha_inicio : actual === 'alarma' ? item.recordar_en : item.fecha_limite;
-  const cuando = !esFecha(iso) ? '' : actual === 'tarea' ? ` (${diaCorto(Date.parse(iso))})` : ` (${diaCorto(Date.parse(iso))}, ${horaCorta(Date.parse(iso))})`;
+  const cuando = !esFecha(iso) ? '' : actual === 'tarea' ? ` (${diaCorto(Date.parse(iso))})` : actual === 'alarma' ? ` (${diaDeAlarma(item, Date.parse(iso))}, ${horaDeAlarma(iso, item.zona_alarma, item.lugar_alarma)})` : ` (${diaDeAlarma(item, Date.parse(iso))}, ${horaDeAlarma(iso, item.zona_alarma, item.lugar_alarma)})`;
   return `Ya lo tengo apuntado como ${actual}: «${limpiarTxt(titulo)}»${cuando}.`;
 }
 
@@ -2599,12 +3496,35 @@ function aplicarConversion({ datos, fechas, titulos }) {
   return null;
 }
 
+// Lo que tienes entre dos días (en la fecha de un sitio): citas y alarmas pendientes, cada una a su hora y en su zona. Para avisar al
+// apuntar un viaje de lo que cae esos días, por si chocan
+function coincidenciasDe(pendientes, desde, hasta, zona) {
+  const borde = (fecha, hora) => Date.parse(`${fecha}T${hora}Z`) - offsetZona(zona, new Date(`${fecha}T12:00:00Z`)) * 60000;
+  const ini = borde(desde, '00:00:00');
+  const fin = borde(hasta, '23:59:59');
+  const cosas = (Array.isArray(pendientes) ? pendientes : [])
+    .map((p) => {
+      const iso = p?.tipo === 'evento' ? p.fecha_inicio : p?.tipo === 'tarea' && p.recordar_en && !p.fecha_limite ? p.recordar_en : null;
+      return esFecha(iso) ? { p, iso, ms: Date.parse(iso) } : null;
+    })
+    .filter((x) => x && x.ms >= ini && x.ms <= fin)
+    .sort((a, b) => a.ms - b.ms);
+  if (cosas.length === 0) return { texto: 'Esos días no tienes citas ni alarmas.', ids: [] };
+  // Numeradas, para poder quitar alguna («quita la 2»); se pregunta si se mantienen
+  const vistas = cosas.slice(0, 15);
+  const lineas = vistas.map(({ p, iso, ms }, n) => `${n + 1}. ${p.tipo === 'evento' ? '📅' : '🔔'} ${limpiarTxt(p.titulo)}, ${diaDeAlarma(p, ms)}, ${horaDeAlarma(iso, p.zona_alarma, p.lugar_alarma)}`);
+  const pregunta = vistas.length === 1 ? '¿La mantienes? Dime «mantenla» o «quítala».' : '¿Las mantienes? Dime «mantenlas», «quítalas» o «quita la 2».';
+  return { texto: `Esos días tienes:\n${lineas.join('\n')}${cosas.length > 15 ? `\n… y ${cosas.length - 15} más.` : ''}\n${pregunta}`, ids: vistas.map(({ p }) => p.id) };
+}
+
 // Una alarma o una cita con un nombre igual o parecido al de otra pendiente: se pregunta si se cambia la que hay o se añade otra. Lo que el usuario
 // ya aceptó añadir ("añade otra") viaja en el hilo (repetidos). Compara las alarmas y citas nuevas con las pendientes de las dos clases.
 const esAlarmaOCita = (r) => r.tipo === 'evento' || esAlarmaItem(r);
 function cuandoDe(r) {
   const iso = r.tipo === 'evento' ? r.fecha_inicio : r.recordar_en;
-  return esFecha(iso) ? `${diaCorto(Date.parse(iso))}, ${horaCorta(Date.parse(iso))}` : 'sin hora';
+  if (!esFecha(iso)) return 'sin hora';
+  // Alarmas y citas, cada una en su zona
+  return `${diaDeAlarma(r, Date.parse(iso))}, ${horaDeAlarma(iso, r.zona_alarma, r.lugar_alarma)}`;
 }
 const lineaExistente = (e) => `«${limpiarTxt(e.titulo)}» (${e.tipo === 'evento' ? 'cita' : 'alarma'}, ${cuandoDe(e)})`;
 function comprobarRepetidos({ datos, pendientes, hiloPrevio }) {
@@ -2654,7 +3574,10 @@ function comprobarLote({ accion, ids, porId, hiloPrevio, proyecto = null, siempr
   return { motivo: 'confirmar_lote', lotes: [{ accion, ids }], texto };
 }
 
-const nombreEvento = (e) => `«${limpiarTxt(e.titulo)}» (${diaCorto(e.ini)}, ${horaCorta(e.ini)}-${horaCorta(e.fin)})`;
+// Cada cita, a su hora y en su zona, con su sitio si no es Madrid
+const sitioTxt = (e) => (e?.zona_alarma && e.zona_alarma !== 'Europe/Madrid' ? ` ${limpiarTxt(e.lugar_alarma || e.zona_alarma)}` : '');
+const horaZ = (e, ms) => { try { return horaEn(zonaDeItem(e), ms); } catch (err) { return horaCorta(ms); } };
+const nombreEvento = (e) => `«${limpiarTxt(e.titulo)}» (${diaDeAlarma(e, e.ini)}, ${horaZ(e, e.ini)}-${horaZ(e, e.fin)}${sitioTxt(e)})`;
 
 function textoSolape(choques, varios) {
   const frases = choques.map(({ p, e, entreNuevos }) =>
@@ -2668,7 +3591,7 @@ function textoSolape(choques, varios) {
 function textoConfirmar(ocupados, propuestos) {
   const bloques = ocupados.map((o) => {
     const lineas = [
-      ...o.eventos.map((e) => `• ${limpiarTxt(e.titulo)}, ${horaCorta(e.ini)}-${horaCorta(e.fin)}`),
+      ...o.eventos.map((e) => `• ${limpiarTxt(e.titulo)}, ${horaZ(e, e.ini)}-${horaZ(e, e.fin)}${sitioTxt(e)}`),
       ...o.tareas.map((t) => `• ${limpiarTxt(t.titulo)} (tarea que vence ese día)`),
     ];
     return `El ${diaCorto(o.ms)} ya tienes:\n${lineas.join('\n')}`;
@@ -2685,7 +3608,7 @@ function comprobarAgenda({ datos, agenda, hiloPrevio, horario = [] }) {
 
   if (datos.intencion === 'guardar') {
     for (const it of datos.items) {
-      if (it.tipo === 'evento' && esFecha(it.fecha_inicio)) propuestos.push({ titulo: it.titulo, ...intervalo(it.fecha_inicio, it.fecha_fin) });
+      if (it.tipo === 'evento' && esFecha(it.fecha_inicio)) propuestos.push({ titulo: it.titulo, ...intervalo(it.fecha_inicio, it.fecha_fin), zona_alarma: it.zona_alarma ?? null, lugar_alarma: it.lugar_alarma ?? null });
     }
   } else if (datos.intencion === 'corregir') {
     const { ids, cambios: comunes, porId: porIdCambios } = datos.correccion;
@@ -2706,7 +3629,7 @@ function comprobarAgenda({ datos, agenda, hiloPrevio, horario = [] }) {
       const inicio = 'fecha_inicio' in cambios ? cambios.fecha_inicio : actual?.fecha_inicio;
       const fin = 'fecha_fin' in cambios ? cambios.fecha_fin : actual?.fecha_fin;
       if (!esFecha(inicio)) continue;
-      propuestos.push({ titulo: cambios.titulo ?? actual?.titulo ?? 'el evento', ...intervalo(inicio, fin) });
+      propuestos.push({ titulo: cambios.titulo ?? actual?.titulo ?? 'el evento', ...intervalo(inicio, fin), zona_alarma: 'zona_alarma' in cambios ? cambios.zona_alarma : actual?.zona_alarma ?? null, lugar_alarma: 'lugar_alarma' in cambios ? cambios.lugar_alarma : actual?.lugar_alarma ?? null });
     }
   }
   if (propuestos.length === 0) return null;
@@ -2715,14 +3638,32 @@ function comprobarAgenda({ datos, agenda, hiloPrevio, horario = [] }) {
   const movidos = new Set(datos.intencion === 'corregir' ? datos.correccion.ids : []);
   const existentes = agenda
     .filter((a) => a.tipo === 'evento' && esFecha(a.fecha_inicio) && !movidos.has(a.id))
-    .map((a) => ({ id: a.id, titulo: a.titulo, ...intervalo(a.fecha_inicio, a.fecha_fin) }));
+    .map((a) => ({ id: a.id, titulo: a.titulo, ...intervalo(a.fecha_inicio, a.fecha_fin), zona_alarma: a.zona_alarma ?? null, lugar_alarma: a.lugar_alarma ?? null }));
 
+  // Una cita de muchas horas (12 o más: «Viaje a Francia» de varios días) no bloquea: se avisa y se pregunta
+  const LARGA_MS = 12 * 3600000;
+  const largas = existentes.filter((e) => e.fin - e.ini >= LARGA_MS);
+  const cortas = existentes.filter((e) => e.fin - e.ini < LARGA_MS);
   const choques = [];
+  const larga = (x) => x.fin - x.ini >= LARGA_MS;
   propuestos.forEach((p, i) => {
-    for (const e of existentes) if (solapa(p, e)) choques.push({ p, e });
+    // Una cita larga nueva (un viaje de varios días) sobre una normal tampoco bloquea: se pregunta abajo
+    for (const e of cortas) if (solapa(p, e) && !larga(p)) choques.push({ p, e });
     for (let j = i + 1; j < propuestos.length; j++) if (solapa(p, propuestos[j])) choques.push({ p, e: propuestos[j], entreNuevos: true });
   });
   if (choques.length > 0) return { motivo: 'solape', dias: [], texto: textoSolape(choques, propuestos.length > 1) };
+  // Dentro de una cita larga: «¿La apunto igualmente?»; el «sí» vale para esa cita larga (viaja en el hilo como el horario fijo)
+  const yaDichas = confirmacionesDelHilo(hiloPrevio).horario;
+  const dentro = [];
+  for (const p of propuestos) for (const e of largas) if (solapa(p, e) && !yaDichas.has(`larga|${e.id}`)) dentro.push({ p, e });
+  for (const p of propuestos.filter(larga)) for (const e of cortas) if (solapa(p, e) && !yaDichas.has(`larga|${e.id}`)) dentro.push({ p: e, e: p, nueva: true });
+  if (dentro.length > 0) {
+    const lineas = dentro.map(({ p, e, nueva }) => (nueva
+      ? `«${limpiarTxt(e.titulo)}» (del ${diaDeAlarma(e, e.ini)} al ${diaDeAlarma(e, e.fin - 1)}) coincide con «${limpiarTxt(p.titulo)}» (${diaDeAlarma(p, p.ini)}, ${horaZ(p, p.ini)}${sitioTxt(p)}).`
+      : `«${limpiarTxt(p.titulo)}» (${diaDeAlarma(p, p.ini)}, ${horaZ(p, p.ini)}${sitioTxt(p)}) cae dentro de «${limpiarTxt(e.titulo)}» (del ${diaDeAlarma(e, e.ini)} al ${diaDeAlarma(e, e.fin - 1)}).`));
+    const verbo = datos.intencion === 'corregir' ? (propuestos.length > 1 ? '¿Las muevo igualmente?' : '¿La muevo igualmente?') : propuestos.length > 1 ? '¿Las apunto igualmente?' : '¿La apunto igualmente?';
+    return { motivo: 'confirmar_horario', horario: [...new Set(dentro.map(({ p, e, nueva }) => `larga|${nueva ? p.id : e.id}`))], texto: `${lineas.join('\n')}\n${verbo}` };
+  }
 
   // Horario fijo: una cita que cae dentro de un bloque se pregunta antes; el «sí» vale para ese bloque ese día
   const confirmadosHorario = confirmacionesDelHilo(hiloPrevio).horario;
@@ -2753,6 +3694,8 @@ function comprobarAgenda({ datos, agenda, hiloPrevio, horario = [] }) {
 // "pendientes": los elementos pendientes que vio el modelo, con ids reales (para resolver los filtros de cancelar y completar y para
 // nombrar lo que se va a tocar). "config.proyectos": los nombres de los proyectos que existen (activos y cerrados).
 function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, agenda = [], archivos = {}, pendientes = [] }) {
+  // La respuesta del modelo tal como llegó: si un atajo la sustituye, ya no es una alarma o cita que el usuario acaba de dictar
+  const respDelModelo = resp;
   const base = config.supabase_url.replace(/\/+$/, '') + '/rest/v1';
   const peticion = (etiqueta, metodo, ruta, cuerpo, prefer) => ({ etiqueta, metodo, url: base + ruta, cuerpo, prefer });
   // Cada pregunta que queda abierta lleva la hora a la que se hizo (en el último turno del hilo, campo «en»): si el usuario escribe otra
@@ -2806,7 +3749,218 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   }
   // No se entiende cuál: la pregunta sigue abierta
   if (carpetaResp?.tipo === 'repetir') return ayudaFija(['Dime el número de la opción.']);
-  // «Déjalo como estaba» / «deshaz» justo después de mover archivos : vuelven a donde estaban y, si la carpeta de la que salieron
+  // --- Viajes: «estoy en Portugal», «he vuelto», «dónde estoy» y las respuestas a sus preguntas, por código ---
+  const sinViaje = comando || elegida || confirmacion || carpetaResp || contexto.pedirNombre === true || contexto.esperaNombre === true;
+  const viajeResp = sinViaje ? null : respuestaViaje(contexto.mensaje, contexto.hiloPrevio, ahora);
+  // /trip (/viaje, /zona) es el mismo «¿dónde estoy?»
+  const viajeOrden = comando?.tipo === 'viaje' ? { tipo: 'estado' } : comando?.tipo === 'viajes' ? { tipo: 'lista' } : sinViaje || viajeResp ? null : viajeQueAplica(interpretarViaje(contexto.mensaje, ahora), Boolean(contexto.viaje && typeof contexto.viaje.zona === 'string' && contexto.viaje.zona !== ZONA_ESPANA));
+  const viaje = contexto.viaje && typeof contexto.viaje.zona === 'string' && typeof contexto.viaje.pais === 'string' ? contexto.viaje : null;
+  // Tramo 2: en un sitio con otra hora, los textos con horas van en la de allí (Resultado lo sabe por meta.zona_texto)
+  const viajeOtraHora = (() => {
+    try {
+      return viaje !== null && difConEspana(viaje.zona, ahora) !== 0;
+    } catch (e) {
+      return false; // una zona que Intl no conoce: todo en hora de España
+    }
+  })();
+  const zonaMeta = viajeOtraHora ? { zona_texto: viaje.zona, lugar_texto: lugarCorto(viaje.pais) } : {};
+  const cerrarPendiente = contexto.pendienteId ? [peticion('cerrar pregunta anterior', 'PATCH', `/mensajes?id=eq.${encodeURIComponent(contexto.pendienteId)}`, { pregunta_pendiente: false }, 'return=minimal')] : [];
+  // Lo que coincide con un viaje que se acaba de apuntar: si hay algo, la respuesta queda abierta para «mantenlas» / «quita la 2»
+  let coincidenciasAbiertas = [];
+  const fijaViaje = (texto, escrituras = [], abiertaPedida = null) => {
+    const abierta = abiertaPedida ?? (coincidenciasAbiertas.length > 0 ? turnoViaje('coincidencias_viaje', { ids: coincidenciasAbiertas }, texto) : null);
+    return fijaViajeCon(texto, escrituras, abierta);
+  };
+  const fijaViajeCon = (texto, escrituras = [], abierta = null) => ({
+    peticiones: [
+      ...cerrarPendiente,
+      marcarMensaje({ procesado: true, error: null, ...(abierta ? { pregunta: texto, pregunta_pendiente: true, hilo: [{ rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: abierta }] } : {}) }),
+      ...escrituras,
+    ],
+    meta: { ok: true, error: null, intencion: 'viaje', avisos: [], respuesta_usuario: texto, respuesta_fija: true, pregunta: abierta ? texto : null, consulta_url: urlNeutra, consulta: null, carpetas: false, ahora: ahora.toISOString() },
+  });
+  const textoVuelta = (habia) => (habia ? `De vuelta: todo vuelve a la hora de España.` : 'No tenía ningún viaje apuntado: sigues en hora de España.');
+  // Lo que tienes esos días: citas y alarmas, cada una a su hora y en su zona, por si chocan con el viaje
+  const lasCoincidencias = (desde, hasta, zona) => {
+    const r = coincidenciasDe(pendientes, desde, hasta, zona);
+    // Con su id real (las referencias cortas cambian de un mensaje a otro)
+    coincidenciasAbiertas = r.ids.map((id) => refs[id] ?? id);
+    return r.texto;
+  };
+  const AVISO_ZONA = 'Lo que apuntes allí irá a la hora de allí, con el país entre paréntesis.';
+  const llegada = (l) => {
+    if (l.zona === ZONA_ESPANA) return fijaViaje(textoVuelta(viaje !== null), [peticion('volver de viaje', 'POST', '/rpc/volver_de_viaje', {}, 'return=representation')]);
+    const dif = difConEspana(l.zona, ahora);
+    const guardar = peticion(`viaje a ${l.pais}`, 'POST', '/rpc/poner_viaje', { p_pais: l.pais, p_zona: l.zona, p_hasta: l.hasta ?? null }, 'return=representation');
+    const hoy = hoyEnZona(l.zona, ahora);
+    // Misma hora que en España: no se dice nada de la hora (decisión del usuario), solo lo que coincide esos días
+    if (dif === 0) return fijaViaje(`Apuntado: estás en ${l.pais}${l.hasta ? ` hasta el ${fechaViajeTexto(l.hasta)}` : ''}.${l.hasta ? `\n${lasCoincidencias(hoy, l.hasta, l.zona)}` : ''}`, [guardar]);
+    if (l.hasta) return fijaViaje(`Apuntado: estás en ${l.pais} (${textoDiferencia(dif)}) hasta el ${fechaViajeTexto(l.hasta)}. ${AVISO_ZONA}\n${lasCoincidencias(hoy, l.hasta, l.zona)}`, [guardar]);
+    const texto = `Apuntado: estás en ${l.pais} (${textoDiferencia(dif)}). ${AVISO_ZONA}\n¿Hasta cuándo estarás allí?`;
+    return fijaViaje(texto, [guardar], turnoViaje('viaje_hasta', { pais: l.pais, zona: l.zona }, texto));
+  };
+  // Las horas de salida o vuelta dichas con el viaje no se guardan (el viaje solo lleva días): se dice, por si quería una alarma
+  const NOTA_HORAS = '(Las horas de salida y vuelta no las guardo en el viaje; si quieres una alarma para salir, dímelo.)';
+  // Un viaje que empieza otro día (base de datos al día): se guarda y ese día pasa a ser el actual solo
+  const planViaje = (t, prefijo = 'Apuntado: ', antes = []) => {
+    // Un viaje por España se planea aunque empiece hoy: «llegar» a un sitio de España sería volver
+    if (t.desde <= hoyEnZona(t.zona, ahora) && t.zona !== ZONA_ESPANA) return llegada(t);
+    const guardar = peticion(`viaje a ${t.pais} desde el ${t.desde}`, 'POST', '/rpc/planear_viaje', { p_pais: t.pais, p_zona: t.zona, p_desde: t.desde, p_hasta: t.hasta ?? null }, 'return=representation');
+    const dif = difConEspana(t.zona, new Date(`${t.desde}T12:00:00Z`));
+    const rango = t.hasta ? `del ${fechaViajeTexto(t.desde)} al ${fechaViajeTexto(t.hasta)}` : `desde el ${fechaViajeTexto(t.desde)}`;
+    let texto = `${prefijo}${rango} en ${t.pais}${dif ? ` (${textoDiferencia(dif)}). Esos días, ${AVISO_ZONA.charAt(0).toLowerCase()}${AVISO_ZONA.slice(1)}` : '.'}`;
+    if (t.hasta) texto += `\n${lasCoincidencias(t.desde, t.hasta, t.zona)}`;
+    if (t.horas) texto += `\n${NOTA_HORAS}`;
+    if (!t.hasta && dif) {
+      texto += '\n¿Hasta cuándo estarás allí?';
+      return fijaViaje(texto, [...antes, guardar], turnoViaje('viaje_hasta', { pais: t.pais, zona: t.zona, desde: t.desde }, texto));
+    }
+    return fijaViaje(texto, [...antes, guardar]);
+  };
+  if (viajeOrden?.tipo === 'plan') return planViaje(viajeOrden);
+  // Un viaje sin decir adónde: se apunta ya (hora de España) y se pregunta a dónde; si no contesta, se queda así
+  if (viajeOrden?.tipo === 'viaje_sin_destino') {
+    const guardar = peticion(`viaje sin destino desde el ${viajeOrden.desde}`, 'POST', '/rpc/planear_viaje', { p_pais: SIN_DESTINO, p_zona: ZONA_ESPANA, p_desde: viajeOrden.desde, p_hasta: viajeOrden.hasta }, 'return=representation');
+    // Lo que coincide esos días se enseña (sin preguntar aún si se mantiene: la pregunta abierta es la del destino)
+    const coinc = coincidenciasDe(pendientes, viajeOrden.desde, viajeOrden.hasta, ZONA_ESPANA);
+    const listaCoinc = coinc.ids.length > 0 ? `\n${coinc.texto.split('\n').slice(0, -1).join('\n')}` : '';
+    const texto = `Apuntado: viaje del ${fechaViajeTexto(viajeOrden.desde)} al ${fechaViajeTexto(viajeOrden.hasta)}.${listaCoinc}${viajeOrden.horas ? `\n${NOTA_HORAS}` : ''}\n¿A dónde vas? Si no quieres decirlo, no hace falta: lo dejo así.`;
+    return fijaViajeCon(texto, [guardar], turnoViaje('viaje_sin_destino', { desde: viajeOrden.desde, hasta: viajeOrden.hasta }, texto));
+  }
+  if (viajeResp?.tipo === 'sin_destino' && viajeResp.no) return fijaViaje('Vale, lo dejo como viaje, sin destino.');
+  if (viajeResp?.tipo === 'sin_destino') return planViaje({ ...viajeResp.destino, desde: viajeResp.desde, hasta: viajeResp.hasta });
+  if (viajeOrden?.tipo === 'cadena') {
+    // «Me quedo hasta el 10 y luego me voy a México»: el último día de donde estás y el tramo siguiente; así no se vuelve sola a España
+    const cerrar = viaje ? [peticion('fecha de vuelta del viaje', 'POST', '/rpc/viaje_hasta', { p_hasta: viajeOrden.hasta }, 'return=representation')] : [];
+    const prefijo = viaje ? `Vale: en ${lugarCorto(viaje.pais)} hasta el ${fechaViajeTexto(viajeOrden.hasta)} y luego, ` : 'Apuntado: ';
+    return planViaje(viajeOrden.siguiente, prefijo, cerrar);
+  }
+  // Irse de donde estás: el último día de aquí es el anterior a la salida; después, el destino (o la hora de España)
+  const salir = (fecha, destino, noSe = false) => {
+    const hoy = hoyEnZona(viaje?.zona ?? ZONA_ESPANA, ahora);
+    const vaAEspana = destino.zona === ZONA_ESPANA;
+    if (!viaje && vaAEspana) return fijaViaje('Ya estás en hora de España.');
+    if (fecha <= hoy) {
+      if (vaAEspana) return fijaViaje(textoVuelta(viaje !== null), [peticion('volver de viaje', 'POST', '/rpc/volver_de_viaje', {}, 'return=representation')]);
+      return llegada({ ...destino, hasta: null });
+    }
+    const ultimo = sumarDias(fecha, -1);
+    const cerrar = viaje ? [peticion('fecha de vuelta del viaje', 'POST', '/rpc/viaje_hasta', { p_hasta: ultimo }, 'return=representation')] : [];
+    const aqui = viaje ? `en ${lugarCorto(viaje.pais)} hasta el ${fechaViajeTexto(ultimo)}` : `hasta el ${fechaViajeTexto(ultimo)}`;
+    if (vaAEspana) return fijaViaje(`Vale: ${aqui}. El ${fechaViajeTexto(fecha)} vuelvo a la hora de España${noSe ? ' (si vas a otro sitio, dímelo: «el … me voy a X»)' : ''}.`, cerrar);
+    return planViaje({ ...destino, desde: fecha, hasta: null }, `Vale: ${aqui} y luego, `, cerrar);
+  };
+  if (viajeOrden?.tipo === 'salida') {
+    if (viajeOrden.destino) return salir(viajeOrden.fecha, viajeOrden.destino);
+    if (!viaje) return fijaViaje('No tengo apuntado que estés de viaje. Si te vas a algún sitio, dímelo así: «mañana me voy a Portugal».');
+    const texto = `¿A dónde vas el ${fechaViajeTexto(viajeOrden.fecha)}? Si vuelves, dime «a España».`;
+    return fijaViaje(texto, [], turnoViaje('viaje_destino', { fecha: viajeOrden.fecha }, texto));
+  }
+  // «¿La apunto igualmente?» de una cita en unas fechas de viaje: «no» no apunta nada; «sí» la apunta (más abajo, como la de la hora)
+  if (viajeResp?.tipo === 'aviso_viaje' && !viajeResp.si) return fijaViaje('Vale, no la apunto.');
+  // «Mantenlas» / «quítalas» / «quita la 2» de lo que coincide con un viaje: quitar va por el camino normal de quitar (con «deshaz»)
+  if (viajeResp?.tipo === 'coincidencias' && viajeResp.quitar.length === 0) return fijaViaje('Vale, las mantengo.');
+  if (viajeResp?.tipo === 'coincidencias') {
+    const refDeC = new Map(Object.entries(refs).map(([r, id]) => [id, r]));
+    const quitar = viajeResp.quitar.map((id) => refDeC.get(id)).filter(Boolean);
+    if (quitar.length === 0) return fijaViaje('Eso ya no está pendiente.');
+    resp = respuestaDeAtajo({ intencion: 'cancelar', cancelar: { item_ids: quitar } });
+  }
+  if (viajeResp?.tipo === 'destino') return salir(viajeResp.fecha, viajeResp.destino, viajeResp.no_se === true);
+  if (viajeOrden?.tipo === 'luego') {
+    if (!viaje?.hasta) return fijaViaje(`¿Cuándo te vas a ${viajeOrden.pais}? Dímelo así: «me quedo hasta el 10 y luego me voy a ${viajeOrden.pais}».`);
+    return planViaje({ ...viajeOrden, desde: sumarDias(viaje.hasta, 1) }, `Vale: después de ${lugarCorto(viaje.pais)}, `);
+  }
+  // Cancelar o cambiar un viaje apuntado: se busca por el sitio entre el actual y los próximos
+  const tramoDe = (zona, nombre) => {
+    // Un viaje por España, por su nombre; con la zona de España no vale cualquiera (sería el viaje sin destino u otro)
+    if (nombre) return (contexto.tramos ?? []).find((t) => sinSignos(t.pais ?? '') === sinSignos(nombre)) ?? null;
+    // Sin sitio («cancela el viaje»): el viaje sin destino, o el único planeado
+    if (zona === null) {
+      const futuros = (contexto.tramos ?? []).filter((t) => !t.actual);
+      return futuros.find((t) => t.pais === SIN_DESTINO) ?? (futuros.length === 1 ? futuros[0] : null);
+    }
+    const ts = (contexto.tramos ?? []).filter((t) => t.zona === zona);
+    return ts.find((t) => !t.actual) ?? ts[0] ?? null;
+  };
+  if (viajeOrden?.tipo === 'cancelar_viaje') {
+    const t = tramoDe(viajeOrden.zona, viajeOrden.nombre);
+    if (!t && viajeOrden.zona === null) return fijaViaje('¿Qué viaje quito? Dímelo con el sitio («cancela el viaje a Japón»). Los tienes en «dame mis viajes».');
+    if (!t) return fijaViaje(`No tengo ningún viaje a ${viajeOrden.nombre ?? lugarCorto(viajeOrden.pais)} apuntado. Mira los que tienes con «dame mis viajes».`);
+    if (t.actual) return fijaViaje(textoVuelta(true), [peticion('volver de viaje', 'POST', '/rpc/volver_de_viaje', {}, 'return=representation')]);
+    if (!t.id) return fijaViaje('No he podido encontrar ese viaje. Prueba con «dame mis viajes».');
+    const rango = t.hasta ? `del ${fechaViajeTexto(t.desde)} al ${fechaViajeTexto(t.hasta)}` : `desde el ${fechaViajeTexto(t.desde)}`;
+    return fijaViaje(`Hecho: quitado el viaje${t.pais === SIN_DESTINO ? '' : ` a ${lugarCorto(t.pais)}`} (${rango}).`, [peticion(`quitar el viaje a ${t.pais}`, 'PATCH', `/viajes?id=eq.${encodeURIComponent(t.id)}&cerrado_at=is.null`, { cerrado_at: ahora.toISOString() }, 'return=representation')]);
+  }
+  if (viajeOrden?.tipo === 'cambiar_viaje') {
+    const t = tramoDe(viajeOrden.zona, viajeOrden.nombre);
+    if (!t || !t.id) return fijaViaje(`No tengo ningún viaje a ${viajeOrden.nombre ?? lugarCorto(viajeOrden.pais)} apuntado. Para apuntarlo: «tengo un viaje a ${viajeOrden.nombre ?? lugarCorto(viajeOrden.pais)} del 20 al 30».`);
+    const desde = viajeOrden.desde ?? t.desde;
+    const hasta = viajeOrden.hasta ?? t.hasta;
+    if (desde && hasta && hasta < desde) return fijaViaje(`Así el viaje acabaría antes de empezar (${fechaViajeTexto(desde)}). ¿Me lo dices otra vez?`);
+    const cambio = { ...(viajeOrden.desde && !t.actual ? { desde: viajeOrden.desde } : {}), ...(viajeOrden.hasta ? { hasta: viajeOrden.hasta } : {}) };
+    if (Object.keys(cambio).length === 0) return fijaViaje(`Ya estás en ${lugarCorto(t.pais)}: solo puedo cambiar hasta cuándo («el viaje a ${lugarCorto(t.pais)} es hasta el 28»).`);
+    const inicio = t.actual ? hoyEnZona(t.zona, ahora) : desde;
+    const rango = hasta ? `del ${fechaViajeTexto(inicio)} al ${fechaViajeTexto(hasta)}` : `desde el ${fechaViajeTexto(inicio)}`;
+    return fijaViaje(`Hecho: el viaje a ${lugarCorto(t.pais)} queda ${rango}.${hasta ? `\n${lasCoincidencias(inicio, hasta, t.zona)}` : ''}`, [peticion(`cambiar el viaje a ${t.pais}`, 'PATCH', `/viajes?id=eq.${encodeURIComponent(t.id)}&cerrado_at=is.null`, cambio, 'return=representation')]);
+  }
+  if (viajeOrden?.tipo === 'ayuda_viaje') {
+    return fijaViaje(`¿Te vas de viaje a ${viajeOrden.pais}? Dímelo con las fechas para cambiar la hora esos días: «el 20 me voy a ${viajeOrden.pais} hasta el 25» o «mañana me voy a ${viajeOrden.pais}». Si ya estás allí: «estoy en ${viajeOrden.pais}».`);
+  }
+  // La sección oculta de los viajes: el actual y los planeados, con sus fechas. Solo si se pide
+  if (viajeOrden?.tipo === 'lista') {
+    const tramos = (contexto.tramos ?? []).slice().sort((a, b) => String(a.desde ?? '').localeCompare(String(b.desde ?? '')));
+    if (tramos.length === 0) return fijaViaje('No tienes viajes apuntados. Para apuntar uno: «el 20 me voy a Japón hasta el 30».');
+    const linea = (t) => {
+      const fechas = t.actual
+        ? `ahora${t.desde ? `, desde el ${fechaViajeTexto(t.desde)}` : ''}${t.hasta ? `, hasta el ${fechaViajeTexto(t.hasta)}` : ', sin fecha de vuelta'}`
+        : t.hasta ? `del ${fechaViajeTexto(t.desde)} al ${fechaViajeTexto(t.hasta)}` : `desde el ${fechaViajeTexto(t.desde)}, sin fecha de vuelta`;
+      let dif = 0;
+      try {
+        dif = difConEspana(t.zona, t.desde ? new Date(`${t.desde}T12:00:00Z`) : ahora);
+      } catch (e) {
+        dif = 0;
+      }
+      return `• ${t.pais === SIN_DESTINO ? 'Viaje (sin destino)' : t.pais}: ${fechas}${dif ? ` (${textoDiferencia(dif)})` : ''}`;
+    };
+    return fijaViaje(`✈️ *Viajes*\n${tramos.map(linea).join('\n')}`);
+  }
+  if (viajeOrden?.tipo === 'estado') {
+    if (!viaje) return fijaViaje('Estás en hora de España.');
+    if (viaje.pais === SIN_DESTINO) return fijaViaje(`Estás de viaje (no me has dicho dónde)${viaje.hasta ? `, hasta el ${fechaViajeTexto(viaje.hasta)}` : ''}, con la hora de España. Si me dices dónde («estoy en Portugal»), cambio la hora.`);
+    const dif = difConEspana(viaje.zona, ahora);
+    return fijaViaje(`Estás en ${viaje.pais} (${textoDiferencia(dif)})${viaje.hasta ? `, hasta el ${fechaViajeTexto(viaje.hasta)}` : ''}. Allí son las ${horaEn(viaje.zona, ahora.getTime())}.`);
+  }
+  if (viajeOrden?.tipo === 'vuelta') return fijaViaje(textoVuelta(viaje !== null), [peticion('volver de viaje', 'POST', '/rpc/volver_de_viaje', {}, 'return=representation')]);
+  if (viajeOrden?.tipo === 'multizona') {
+    const texto = `${viajeOrden.pais} tiene varias horas. ¿En qué ciudad estás?`;
+    return fijaViaje(texto, [], turnoViaje('viaje_ciudad', { pais: viajeOrden.pais }, texto));
+  }
+  if (viajeOrden?.tipo === 'lugar') return llegada(viajeOrden);
+  if (viajeResp?.tipo === 'lugar') return llegada(viajeResp);
+  if (viajeResp?.tipo === 'hasta' && viajeResp.no_se) {
+    return fijaViaje(`Vale. Cada mañana, en el resumen, te recordaré que estás en ${viajeResp.pais || 'otro país'}. Cuando vuelvas, dime «he vuelto».`);
+  }
+  if (viajeResp?.tipo === 'hasta' && viajeResp.desde && viajeResp.zona) {
+    // El último día de un viaje planeado (base de datos al día): se vuelve a guardar el tramo con su fecha de vuelta
+    if (viajeResp.fecha < viajeResp.desde) return fijaViaje(`Ese día es antes de que empiece el viaje (${fechaViajeTexto(viajeResp.desde)}). ¿Hasta cuándo estarás allí?`);
+    return fijaViaje(`Vale, hasta el ${fechaViajeTexto(viajeResp.fecha)}.\n${lasCoincidencias(viajeResp.desde, viajeResp.fecha, viajeResp.zona)}`, [peticion(`viaje a ${viajeResp.pais} desde el ${viajeResp.desde}`, 'POST', '/rpc/planear_viaje', { p_pais: viajeResp.pais, p_zona: viajeResp.zona, p_desde: viajeResp.desde, p_hasta: viajeResp.fecha }, 'return=representation')]);
+  }
+  if (viajeResp?.tipo === 'hasta') {
+    const siguiente = new Date(Date.parse(`${viajeResp.fecha}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    const sigueOtro = (contexto.tramos ?? []).some((t) => t && !t.actual && t.desde === siguiente);
+    const zona = viajeResp.zona ?? viaje?.zona ?? ZONA_ESPANA;
+    return fijaViaje(`Vale, hasta el ${fechaViajeTexto(viajeResp.fecha)}.${sigueOtro ? '' : ` El ${fechaViajeTexto(siguiente)} vuelvo sola a la hora de España.`}\n${lasCoincidencias(hoyEnZona(zona, ahora), viajeResp.fecha, zona)}`, [peticion('fecha de vuelta del viaje', 'POST', '/rpc/viaje_hasta', { p_hasta: viajeResp.fecha }, 'return=representation')]);
+  }
+  // «1» / «2» a «¿Las 14:00 de España o de Portugal?»: se vuelve a usar la respuesta del modelo que se guardó con la pregunta (sin llamarlo
+  // otra vez) con sus referencias de entonces; con «de allí», sus horas se pasan a la del país después de validarla
+  // El plan de la zona ya decidido: el de la pregunta que se acaba de contestar, o uno anterior de este hilo
+  const zonaPrevia = viajeResp?.tipo === 'zona' ? { plan: viajeResp.plan, eleccion: viajeResp.eleccion } : planDelHilo(contexto.hiloPrevio, ahora);
+  if (viajeResp?.tipo === 'zona' || (viajeResp?.tipo === 'aviso_viaje' && viajeResp.si)) {
+    resp = { candidates: [{ content: { parts: [{ text: viajeResp.respuesta }] } }] };
+    refs = { ...refs, ...Object.fromEntries(Object.entries(viajeResp.refs).filter(([k, v]) => /^i\d{1,3}$/.test(k) && typeof v === 'string')) };
+  }
+  // «Déjalo como estaba» / «deshaz» justo después de mover archivos: vuelven a donde estaban y, si la carpeta de la que salieron
   // estaba apuntada para vaciarla (base de datos 1.5), se anula (si ya fue a la papelera, «Sincronizar Drive» crea otra igual)
   const mov = contexto.movidosRecientes;
   const vuelta = comando || elegida || confirmacion || contexto.pedirNombre === true || contexto.esperaNombre === true
@@ -2935,6 +4089,23 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   // Archivo con pie que es solo una ruta («Fotos/Viajes»): se archiva sin el modelo
   const carpetaSuelta = comando || elegida || confirmacion || suelto || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarCarpetaSuelta(contexto.mensaje, contexto.archivosCitados);
   if (carpetaSuelta) resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: carpetaSuelta.refs, carpeta: carpetaSuelta.ruta, nombre: null } });
+  // «Ponme en Budapest que…»: una nota en esa carpeta, sin el modelo. Va antes que crear carpetas y que el modelo
+  const notaCarp = comando || elegida || confirmacion || suelto || carpetaSuelta || (contexto.archivosCitados ?? []).length > 0 || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarNotaEnCarpeta(contexto.mensaje, (contexto.carpetasConocidas ?? []).map((c) => c.ruta));
+  let notaCarpetaLinea = null;
+  if (notaCarp?.varias) return ayudaFija([`Tienes varias carpetas «${limpiarTxt(notaCarp.nombre)}»: ${notaCarp.varias.map((r) => `«${limpiarTxt(r)}»`).join(', ')}. Dímelo con la ruta («ponme en ${limpiarTxt(notaCarp.varias[0])} que…»).`]);
+  if (notaCarp) {
+    const item = { tipo: 'nota', titulo: notaCarp.titulo, confianza: 1, ...(notaCarp.ruta ? { carpeta: notaCarp.ruta } : {}) };
+    resp = respuestaDeAtajo({ intencion: 'guardar', items: [item] });
+    if (notaCarp.ruta) notaCarpetaLinea = `📂 En la carpeta «${limpiarTxt(notaCarp.ruta)}».`;
+    if (notaCarp.sinCarpeta) notaCarpetaLinea = `No tienes ninguna carpeta «${limpiarTxt(notaCarp.sinCarpeta)}»: la guardo como nota normal.`;
+  }
+  // «Crea la carpeta Recetas (dentro de Fotos)»: sin el modelo y sin preguntar. Si ya existe, se dice
+  const crearCarp = notaCarp || comando || elegida || confirmacion || suelto || carpetaSuelta || contexto.pedirNombre === true || contexto.esperaNombre === true ? null : interpretarCrearCarpeta(contexto.mensaje);
+  if (crearCarp) {
+    const ya = (contexto.carpetasConocidas ?? []).map((c) => c.ruta).find((r) => typeof r === 'string' && sinAcentos(r) === sinAcentos(crearCarp.ruta));
+    if (ya) return ayudaFija([`Ya tienes la carpeta «${limpiarTxt(ya)}».`]);
+    resp = respuestaDeAtajo({ intencion: 'crear_carpeta', crear_carpeta: { rutas: [crearCarp.ruta] } });
+  }
   // La carpeta elegida en «¿Dónde la guardo?»: se archiva ahí sin volver a preguntar (los archivos se buscan por su id: sus referencias cambian)
   let carpetaConfirmada = null;
   if (carpetaResp?.tipo === 'elegida') {
@@ -2949,7 +4120,7 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
     resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: refsElegidos, carpeta: carpetaResp.ruta, nombre: carpetaResp.nombre } });
     carpetaConfirmada = carpetaResp.ruta;
   }
-  const sinAtajo = comando || elegida || confirmacion || suelto || carpetaSuelta || carpetaResp || contexto.pedirNombre === true || contexto.esperaNombre === true;
+  const sinAtajo = comando || elegida || confirmacion || suelto || carpetaSuelta || notaCarp || crearCarp || carpetaResp || contexto.pedirNombre === true || contexto.esperaNombre === true;
   // «Ponlo en Budapest» sin citar nada, justo después de mandar fotos: el último lote 
   const ultimoLote = sinAtajo || (contexto.archivosCitados ?? []).length > 0 ? null : archivarUltimoLote(contexto.mensaje, contexto.loteReciente);
   if (ultimoLote) resp = respuestaDeAtajo({ intencion: 'archivar', archivos: { refs: ultimoLote.refs, carpeta: ultimoLote.ruta, nombre: null } });
@@ -2965,6 +4136,9 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   const moverOrden = sinAtajo || ultimoLote || moverArch ? null : interpretarMoverCarpeta(contexto.mensaje, rutasConocidas);
   if (moverOrden) resp = respuestaDeAtajo({ intencion: 'mover_carpeta', mover_carpeta: moverOrden });
   if (moverArch) resp = respuestaDeAtajo({ intencion: 'mover_archivos', mover_archivos: moverArch });
+  // «Dame todos los archivos de X»: todos los de esa carpeta, por código
+  const verArch = sinAtajo || ultimoLote || moverArch || moverOrden ? null : interpretarVerArchivos(contexto.mensaje, rutasConocidas);
+  if (verArch) resp = respuestaDeAtajo({ intencion: 'ver_archivos', ver_archivos: verArch });
   if (!comando && pideBorrarTodo(contexto.mensaje)) resp = respuestaDeAtajo({ intencion: 'cancelar', cancelar: { filtro: {} } });
   const variasSecciones = comando || elegida || confirmacion || suelto ? null : borrarSecciones(contexto.mensaje);
   if (variasSecciones) resp = respuestaDeAtajo({ intencion: 'cancelar', cancelar: { filtros: variasSecciones } });
@@ -3059,6 +4233,128 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   }
 
   const { datos, avisos } = validado;
+  let notaZona = null;
+  // Los viajes del modelo van antes que la pregunta de la hora: un viaje no es una cita y no lleva hora
+  const tituloDeViaje = (it) => it.tipo === 'evento' && esFecha(it.fecha_inicio) && /^(?:mi |un |el )?(?:viaje|vacaciones|escapada)\b/.test(sinSignos(it.titulo ?? ''));
+  // De una cita «Viaje…» del modelo, el viaje: el sitio (del título; si va sola, también del mensaje o del hilo), la zona y los días (los de la
+  // cita si acaba otro día; si no, los del mensaje, «del 8 al 10»; si no, ese día)
+  const viajeDeCita = (it, soloTitulo) => {
+    const titulo = sinSignos(it.titulo ?? '');
+    const sitio = lugarEnMensaje(`en ${it.titulo}`) ?? (soloTitulo ? null : lugarEnMensaje(contexto.mensaje) ?? (contexto.hiloPrevio ?? []).map((t) => (t.rol === 'user' ? lugarEnMensaje(t.texto) : null)).find(Boolean));
+    const fuera = sitio && !sitio.dudoso && sitio.zona !== ZONA_ESPANA;
+    const zonaV = fuera ? sitio.zona : ZONA_ESPANA;
+    const diaDe = (iso, finExclusivo = false) => (conHora(iso) ? hoyEnZona(zonaV, new Date(Date.parse(iso) - (finExclusivo ? 1 : 0))) : String(iso).slice(0, 10));
+    let desde = diaDe(it.fecha_inicio);
+    let hasta = esFecha(it.fecha_fin) ? diaDe(it.fecha_fin, conHora(it.fecha_fin)) : desde;
+    if (!(hasta > desde)) {
+      const r = /(?:del|desde el) (\d{1,2}(?: de [a-z]+)?) (?:al|hasta el) (\d{1,2}(?: de [a-z]+)?)/.exec(sinSignos(contexto.mensaje ?? ''));
+      const rango = r ? rangoViaje(r[1], r[2], ahora) : null;
+      if (rango?.desde && rango?.hasta && rango.hasta >= rango.desde) [desde, hasta] = [rango.desde, rango.hasta];
+      else hasta = desde;
+    }
+    const horas = conHora(it.fecha_inicio) && it.fecha_inicio.slice(11, 16) !== '00:00';
+    if (fuera) return { tipo: 'fuera', pais: sitio.pais, zona: sitio.zona, desde, hasta, horas };
+    // Un sitio de España con nombre en el título («Viaje a Barcelona»): viaje con ese nombre y la hora de España
+    const enTitulo = /^(?:mi |un |el )?(?:viaje|vacaciones|escapada)(?: de (?:trabajo|vacaciones|placer))? (?:a|en|por|para) (.+)$/.exec(titulo);
+    if (sitio && sitio.zona === ZONA_ESPANA && enTitulo && lugarEnMensaje(`en ${enTitulo[1]}`)) return { tipo: 'nacional', pais: nombreDeSitio(enTitulo[1]), zona: ZONA_ESPANA, desde, hasta, horas };
+    return { tipo: 'sin_destino', pais: SIN_DESTINO, zona: ZONA_ESPANA, desde, hasta, horas };
+  };
+  const pideDestino = '¿A dónde vas? Si no quieres decirlo, no hace falta: lo dejo así.';
+  // Con varias cosas a la vez («viaje del 8 al 10 y el 9 dentista»): lo demás se apunta y el viaje se guarda aparte, como viaje (nunca como cita),
+  // con una línea en la confirmación. Con dos viajes en el mismo mensaje no se adivina: se quitan y se pide decirlos uno a uno
+  let viajeAparte = null;
+  if (datos.intencion === 'guardar' && datos.items.length > 1 && !datos.archivos && datos.items.some(tituloDeViaje)) {
+    const viajes = datos.items.filter(tituloDeViaje);
+    datos.items = datos.items.filter((it) => !tituloDeViaje(it));
+    if (viajes.length === 1) {
+      const v = viajeDeCita(viajes[0], true);
+      const dif = v.zona !== ZONA_ESPANA ? difConEspana(v.zona, new Date(`${v.desde}T12:00:00Z`)) : 0;
+      const rango = v.hasta > v.desde ? `del ${fechaViajeTexto(v.desde)} al ${fechaViajeTexto(v.hasta)}` : `el ${fechaViajeTexto(v.desde)}`;
+      const nota = `✈️ Y el viaje, aparte (no como cita): ${rango}${v.tipo === 'sin_destino' ? '' : ` en ${lugarCorto(v.pais)}`}${dif ? ` (${textoDiferencia(dif)})` : ''}.${v.horas ? `\n${NOTA_HORAS}` : ''}${v.tipo === 'sin_destino' ? `\n${pideDestino}` : ''}`;
+      const etiqueta = v.tipo === 'sin_destino' ? `viaje sin destino desde el ${v.desde}` : `viaje a ${v.pais} desde el ${v.desde}`;
+      viajeAparte = { peticion: peticion(etiqueta, 'POST', '/rpc/planear_viaje', { p_pais: v.pais, p_zona: v.zona, p_desde: v.desde, p_hasta: v.hasta }, 'return=representation'), sinDestino: v.tipo === 'sin_destino', desde: v.desde, hasta: v.hasta, nota };
+      avisos.push(`el modelo apuntó «${viajes[0].titulo}» como cita junto a otras cosas: se guarda aparte como viaje`);
+      notaZona = notaZona ? `${notaZona}\n${nota}` : nota;
+    } else {
+      avisos.push(`el modelo apuntó ${viajes.map((it) => `«${it.titulo}»`).join(', ')} como citas: se quitan (un viaje no es una cita)`);
+      const aviso = `✈️ ${viajes.map((it) => `«${it.titulo}»`).join(' y ')} no los apunto como citas: dime los viajes de uno en uno («tengo un viaje a Francia del 8 al 10»).`;
+      if (datos.items.length === 0) return fijaViaje(aviso);
+      notaZona = notaZona ? `${notaZona}\n${aviso}` : aviso;
+    }
+  }
+  // Una sola cita «Viaje…»: se guarda como viaje, dure lo que dure (el 6 de noviembre, «viaje del 8 al 10, a las 9 salgo y vuelvo a las 9» acabó en
+  // «Cita: Viaje, de 09:00 a 09:00»)
+  if (datos.intencion === 'guardar' && datos.items.length === 1 && !datos.archivos && tituloDeViaje(datos.items[0])) {
+    const it = datos.items[0];
+    const v = viajeDeCita(it, false);
+    const extra = v.horas ? { horas: true } : {};
+    if (v.tipo !== 'sin_destino') {
+      avisos.push(`el modelo apuntó «${it.titulo}» como cita: se guarda como viaje${v.tipo === 'nacional' ? ' por España' : ''}`);
+      return planViaje({ pais: v.pais, zona: v.zona, desde: v.desde, hasta: v.hasta, ...extra });
+    }
+    // Sin sitio conocido: viaje sin destino, preguntando a dónde
+    avisos.push(`el modelo apuntó «${it.titulo}» como cita sin sitio: se guarda como viaje sin destino`);
+    const guardar = peticion(`viaje sin destino desde el ${v.desde}`, 'POST', '/rpc/planear_viaje', { p_pais: SIN_DESTINO, p_zona: ZONA_ESPANA, p_desde: v.desde, p_hasta: v.hasta }, 'return=representation');
+    const texto = `Apuntado: viaje ${v.hasta > v.desde ? `del ${fechaViajeTexto(v.desde)} al ${fechaViajeTexto(v.hasta)}` : `el ${fechaViajeTexto(v.desde)}`}.${v.horas ? `\n${NOTA_HORAS}` : ''}\n${pideDestino}`;
+    return fijaViajeCon(texto, [guardar], turnoViaje('viaje_sin_destino', { desde: v.desde, hasta: v.hasta }, texto));
+  }
+  // Viajes: una alarma o una cita con hora fija mientras el usuario está en un sitio con otra hora → «¿Las 14:00 de España o de
+  // Portugal?». Se guarda la respuesta del modelo con la pregunta y no se escribe nada hasta que conteste. Solo si la hora la ha dicho él (no
+  // «en 20 minutos») y viene del modelo (no de un atajo ni de una respuesta a otra pregunta del código)
+  // La confirmación («⏰ … 15:00») aún sale en hora de España: una línea dice las dos horas para que no parezca un error
+  // Viajes y zona de cada alarma y cita. La zona en la que va una hora: la decidida antes en este hilo (pregunta contestada
+  // o una pregunta posterior) o la que dice este mensaje del modelo (un sitio nombrado, «hora de X», una alarma que ya tiene zona, o el viaje).
+  // Solo con lo que viene del modelo (no de un atajo) y sin archivos. Si hay que preguntar, se guarda la respuesta del modelo con la pregunta y
+  // no se escribe nada hasta que conteste.
+  let planZona = null;
+  if (zonaPrevia?.plan) {
+    planZona = { ...zonaPrevia.plan, eleccion: zonaPrevia.eleccion };
+  } else if (resp === respDelModelo && !datos.archivos) {
+    const refDeId = new Map(Object.entries(refs).map(([r, id]) => [id, r]));
+    const zonasCorregidas = datos.intencion === 'corregir' && datos.correccion
+      ? datos.correccion.ids.map((id) => pendientes.find((p) => p.id === id || p.id === refDeId.get(id))).filter(Boolean).filter((p) => typeof p.zona_alarma === 'string' && p.zona_alarma !== '').map((p) => ({ zona: p.zona_alarma, lugar: p.lugar_alarma || p.zona_alarma }))
+      : [];
+    const plan = planearZona(datos, contexto.mensaje, ahora, { viaje: viajeOtraHora ? viaje : null, viajeActual: viaje, tramos: contexto.tramos ?? [], zonasCorregidas });
+    if (plan && hayQuePreguntar(plan, datos)) {
+      const { alarmas: hA, citas: hC } = horasDe(datos);
+      const h = (plan.alarmas === 'preguntar' ? hA[0] : undefined) ?? hC[0] ?? hA[0];
+      if (texto.length <= 20000 && Number.isFinite(h)) {
+        const pregunta = `${plan.aviso ? `${plan.aviso}\n` : ''}${textoZonaHora({ zona: plan.zona, pais: plan.lugar }, h, plan.uno ?? null)}`;
+        const usadas = Object.fromEntries([...new Set(texto.match(/\bi\d{1,3}\b/g) ?? [])].filter((r) => typeof refs[r] === 'string').map((r) => [r, refs[r]]));
+        return fijaViaje(pregunta, [], turnoViaje('zona_hora', { respuesta: texto, refs: usadas, zona: plan.zona, pais: plan.lugar, plan }, pregunta));
+      }
+    }
+    planZona = plan ? { ...plan, eleccion: null } : null;
+  }
+  if (planZona) {
+    // En la respuesta a la pregunta de la hora («2») no hay hora en el mensaje; en un mensaje posterior («a las 22:30»), sí
+    const h = aplicarPlanZona(datos, planZona, planZona.eleccion, viajeResp?.tipo === 'zona' ? null : horaDicha(contexto.mensaje));
+    avisos.push(`zona: ${planZona.zona} (alarmas ${planZona.alarmas}, citas ${planZona.citas}${planZona.eleccion ? `, elegido ${planZona.eleccion}` : ''}${planZona.dias ? `, ${planZona.dias} día(s)` : ''})`);
+    // Tras contestar «1» o «2», una línea con las dos horas
+    if (planZona.eleccion && Number.isFinite(h)) {
+      const elegido = planZona.eleccion === 'local' ? { zona: planZona.zona, lugar: planZona.lugar } : planZona.uno && planZona.uno.zona !== ZONA_ESPANA ? planZona.uno : null;
+      notaZona = elegido
+        ? `🌍 Las ${horaEn(elegido.zona, h)} de ${lugarCorto(elegido.lugar)} (${horaEn(ZONA_ESPANA, h)} en España).`
+        : `🌍 Las ${horaEn(ZONA_ESPANA, h)} de España (${horaEn(planZona.zona, h)} en ${lugarCorto(planZona.lugar)}).`;
+    }
+  } else if (viajeOtraHora && resp === respDelModelo && datos.intencion === 'guardar' && !diceHoraDeReloj(contexto.mensaje)) {
+    // Una alarma relativa puesta de viaje («en 20 minutos»): el instante no cambia, pero se escribe en la hora de allí («13:20 (Portugal)»)
+    marcarZonaAlarmas(datos, viaje.zona, lugarCorto(viaje.pais));
+  }
+  // Un viaje que el modelo apuntó como cita («Viaje a Francia» del 8 al 10). Un viaje NUNCA se guarda como cita: una sola
+  // cita cuyo título empieza por viaje, vacaciones o escapada se guarda como viaje, dure lo que dure (el 6 de noviembre, «viaje del 8 al 10, a
+  // las 9 salgo y vuelvo a las 9» acabó en «Cita: Viaje, de 09:00 a 09:00»). Los días: los de la cita si acaba otro día; si no, los del mensaje
+  // Una cita para unas fechas en que estarás de viaje en un sitio con la misma hora: se pregunta antes de apuntarla, con lo que dijo
+  // el modelo guardado (como la pregunta de la hora). Con otra hora ya se preguntó la zona, con el aviso delante
+  if (!planZona && !zonaPrevia && resp === respDelModelo && !datos.archivos && texto.length <= 20000) {
+    const t = viajeDeLaCita(datos, contexto.tramos ?? [], viaje?.zona ?? ZONA_ESPANA);
+    if (t) {
+      const rango = t.hasta ? `del ${fechaViajeTexto(t.desde)} al ${fechaViajeTexto(t.hasta)}` : `desde el ${fechaViajeTexto(t.desde)}`;
+      const pregunta = `Esos días estarás de viaje${t.pais === SIN_DESTINO ? '' : ` en ${lugarCorto(t.pais)}`} (${rango}). ¿La apunto igualmente?`;
+      const usadas = Object.fromEntries([...new Set(texto.match(/\bi\d{1,3}\b/g) ?? [])].filter((r) => typeof refs[r] === 'string').map((r) => [r, refs[r]]));
+      return fijaViaje(pregunta, [], turnoViaje('aviso_viaje', { respuesta: texto, refs: usadas }, pregunta));
+    }
+  }
   // El modelo no sabe que se pueden mover carpetas y archivos: si lo niega en una pregunta («No puedo mover carpetas en Drive. ¿Quieres que…?»,
   // no se deja la pregunta abierta y se contesta cómo pedirlo
   if (datos.intencion === 'aclarar' && typeof datos.pregunta === 'string' && (DICE_QUE_NO_MUEVE.test(datos.pregunta) || DICE_QUE_NO_MUEVE_ARCHIVOS.test(datos.pregunta))) {
@@ -3096,6 +4392,8 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
     carpetas: false,
     ahora: ahora.toISOString(),
     ...(datos.nombreNuevo ? { nombre_nuevo: datos.nombreNuevo, tras_pregunta_nombre: contexto.esperaNombre === true } : {}),
+    ...(notaZona ? { nota_zona: notaZona } : {}),
+    ...zonaMeta,
   };
 
   // Tope de la memoria: un dato NUEVO (un término que no existe) no se guarda si ya hay MAX_MEMORIA; cambiar uno que existe, sí
@@ -3225,7 +4523,7 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
         meta: { ...meta, respuesta_usuario: '', mover_archivos: { esos: true, destino: dest.ruta, previas: previasDe(ids) } },
       };
     }
-    // Varios archivos con el mismo nombre (fotos del mismo minuto, antes de la sección 76): se pregunta antes de mover los dos
+    // Varios archivos con el mismo nombre (fotos del mismo minuto, antes de la): se pregunta antes de mover los dos
     const iguales = (contexto.archivosConocidos ?? []).filter((a) => a.nombre === ma.nombre);
     if (iguales.length > 1 && !ma.todos) {
       const donde = [...new Set(iguales.map((a) => a.carpeta ?? (a.estado === 'pendiente' ? 'Entrada' : null)).filter(Boolean))];
@@ -3283,7 +4581,8 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       if (pasada) break;
     }
     if (pasada) {
-      return sinTocarNada(`Esa hora ya ha pasado (${fmtDiaCorto.format(new Date(pasada))}, ${fmtHoraCorta.format(new Date(pasada))}). ¿Qué otra hora?`);
+      const zc = { ...datos.correccion.cambios };
+      return sinTocarNada(`Esa hora ya ha pasado (${diaDeAlarma(zc, Date.parse(pasada))}, ${horaDeAlarma(pasada, zc.zona_alarma, zc.lugar_alarma)}). ¿Qué otra hora?`);
     }
   }
 
@@ -3339,8 +4638,11 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   // Primero los proyectos nuevos (qué se guarda) y después la agenda (cuándo). Lo que el usuario ya aceptó en la pregunta anterior
   // viaja en la nueva, sea del tipo que sea.
   const hiloPrevio = contexto.hiloPrevio ?? [];
+  // Las notas que nombran una carpeta tuya («el hotel de Budapest es el Hilton») van a ella
+  const lineaNotasCarpeta = notaCarp ? null : notasACarpeta(datos, contexto.mensaje, (contexto.carpetasConocidas ?? []).map((c) => c.ruta), avisos);
   // Las alarmas se convierten antes de comprobar la agenda: no entran en el control de solapes ni piden confirmar el día
-  eventosAAlarmas(datos, ahora, meta, contexto.mensaje);
+  const modoCitasZona = planZona ? (planZona.citas === 'preguntar' ? planZona.eleccion : planZona.citas) : null;
+  eventosAAlarmas(datos, ahora, meta, contexto.mensaje, modoCitasZona === 'local' ? { zona: planZona.zona, lugar: planZona.lugar } : null);
   const bloqueo =
     bloqueoConversion ??
     comprobarProyectos({ datos, config, hiloPrevio }) ??
@@ -3359,6 +4661,8 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       lotes: [...previas.lotes, ...(bloqueo.lotes ?? [])],
       repetidos: [...new Set([...previas.repetidos, ...(bloqueo.repetidos ?? [])])],
       horario: [...new Set([...previas.horario, ...(bloqueo.horario ?? [])])],
+      // La zona ya decidida: el «sí» a esta pregunta vuelve al modelo, que entiende las horas en hora de España otra vez
+      ...(planZona ? { zona_plan: planZona } : {}),
     });
     return {
       peticiones: [
@@ -3377,6 +4681,14 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   if (datos.intencion === 'archivar' && datos.archivos) {
     const rev = revisarCarpetaPedida(datos.archivos.carpeta, contexto.carpetasConocidas ?? []);
     const confirmada = carpetaConfirmada !== null && sinAcentos(carpetaConfirmada) === sinAcentos(datos.archivos.carpeta);
+    // Con UNA sola parecida («Budapest» y solo existe «Viajes/Budapest», o una errata como «Budapes»), se guarda ahí sin preguntar y se dice
+    //. Con varias, sí se pregunta: no se puede adivinar
+    if (rev.parecidas && !confirmada && rev.parecidas.length === 1) {
+      meta.nota_zona = `📂 No tenías «${limpiarTxt(rev.ruta)}»: lo he guardado en «${limpiarTxt(rev.parecidas[0])}». Si querías una carpeta nueva, dime «crea la carpeta ${limpiarTxt(rev.ruta)}».`;
+      avisos.push(`carpeta «${rev.ruta}» no existe; una sola parecida: se usa «${rev.parecidas[0]}»`);
+      rev.ruta = rev.parecidas[0];
+      rev.parecidas = null;
+    }
     if (rev.parecidas && !confirmada) {
       if (typeof contexto.mensaje !== 'string' || contexto.mensaje === '') throw new Error('Planificar: falta el texto del mensaje para guardar la pregunta de la carpeta');
       const ids = datos.archivos.refs.map((r) => archivos.refs[r]).filter((x) => typeof x === 'string');
@@ -3403,9 +4715,9 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       if (it.tipo !== 'tarea' || !esFecha(it.recordar_en)) return it;
       if (Date.parse(it.recordar_en) <= ahora.getTime()) {
         pasados.push(it.titulo);
-        return { ...it, recordar_en: null };
+        return { ...it, recordar_en: null, ...('zona_alarma' in it ? { zona_alarma: null, lugar_alarma: null } : {}) };
       }
-      recordatorios.push({ titulo: it.titulo, recordar_en: new Date(Date.parse(it.recordar_en)).toISOString() });
+      recordatorios.push({ titulo: it.titulo, recordar_en: new Date(Date.parse(it.recordar_en)).toISOString(), ...(it.zona_alarma ? { zona_alarma: it.zona_alarma, lugar_alarma: it.lugar_alarma } : {}) });
       return it;
     });
     if (recordatorios.length > 0) meta.recordatorios = recordatorios;
@@ -3424,7 +4736,7 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       .filter((it) => it.tipo === 'evento' && esFecha(it.fecha_inicio))
       .map((it) => {
         const { ini, fin } = intervalo(it.fecha_inicio, it.fecha_fin);
-        return { titulo: it.titulo, inicio: new Date(ini).toISOString(), fin: new Date(fin).toISOString(), minutos: Math.round((fin - ini) / 60000) };
+        return { titulo: it.titulo, inicio: new Date(ini).toISOString(), fin: new Date(fin).toISOString(), minutos: Math.round((fin - ini) / 60000), ...(it.zona_alarma ? { zona_alarma: it.zona_alarma, lugar_alarma: it.lugar_alarma } : {}) };
       });
     if (eventos.length > 0) meta.eventos = eventos;
     if (datos.archivos) {
@@ -3455,6 +4767,8 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   if (datos.intencion === 'carpetas') meta.carpetas = true;
   // Crear carpetas vacías: se apuntan en carpetas_pedidas y el flujo "Sincronizar Drive" las crea (un nivel por pasada). Pedir otra vez
   // una carpeta ya pedida la vuelve a marcar como pendiente, así se recrea una que se hubiera borrado a mano en Drive.
+  if (lineaNotasCarpeta && datos.intencion === 'guardar') meta.nota_zona = meta.nota_zona ? `${lineaNotasCarpeta}\n${meta.nota_zona}` : lineaNotasCarpeta;
+  if (notaCarpetaLinea && datos.intencion === 'guardar') meta.nota_zona = meta.nota_zona ? `${notaCarpetaLinea}\n${meta.nota_zona}` : notaCarpetaLinea;
   if (datos.intencion === 'crear_carpeta') {
     peticiones.push(
       peticion(
@@ -3492,6 +4806,8 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
   // estado (también los ya clasificados) y con el item del que cuelgan, que decide su carpeta.
   if (datos.intencion === 'ver_archivos') {
     meta.consulta_url = `${base}/archivos?select=nombre,drive_file_id,drive_url,created_at,tipo_mime,carpeta_destino,estado,items(tipo)&eliminado_at=is.null&order=created_at.desc&limit=1000`;
+    // Y los archivos de la foto del árbol de Drive: así salen también los subidos a mano, que la secretaria no tiene registrados
+    meta.consulta_drive_url = `${base}/drive_arbol?select=drive_id,nombre,ruta,created_at&tipo=eq.archivo&eliminado_at=is.null&order=created_at.desc&limit=2000`;
     meta.consulta_archivos = datos.filtroArchivos;
   }
   if (datos.memoriaNueva) {
@@ -3570,6 +4886,20 @@ function planificar({ resp, mensajeId, config, ahora, refs = {}, contexto = {}, 
       hilo: [...(contexto.hiloPrevio ?? []), { rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turnoAvisoCompra(aviso, texto) }],
     });
   }
+  // El viaje que venía junto a otras cosas: se guarda con ellas. Sin destino, se pregunta a dónde si no hay ya otra pregunta abierta;
+  // si la hay, la línea no pregunta (la respuesta no llegaría a ningún sitio) y el viaje queda sin destino
+  if (viajeAparte && datos.intencion === 'guardar') {
+    peticiones.push(viajeAparte.peticion);
+    if (viajeAparte.sinDestino && !cuerpoMensaje.pregunta_pendiente) {
+      Object.assign(cuerpoMensaje, {
+        pregunta: viajeAparte.nota,
+        pregunta_pendiente: true,
+        hilo: [...(contexto.hiloPrevio ?? []), { rol: 'user', texto: contexto.mensaje }, { rol: 'model', texto: turnoViaje('viaje_sin_destino', { desde: viajeAparte.desde, hasta: viajeAparte.hasta }, viajeAparte.nota) }],
+      });
+    } else if (viajeAparte.sinDestino && typeof meta.nota_zona === 'string') {
+      meta.nota_zona = meta.nota_zona.replace(`\n${pideDestino}`, '');
+    }
+  }
   peticiones.push(marcarMensaje(cuerpoMensaje));
 
   // La pregunta anterior queda contestada en cuanto este mensaje se procesa bien (si falló, sigue abierta para reintentar)
@@ -3628,6 +4958,10 @@ const contexto = {
       }
     : null,
   archivosConocidos: Array.isArray(construccion.archivos_conocidos) ? construccion.archivos_conocidos.filter((a) => a && typeof a.id === 'string' && typeof a.nombre === 'string') : [],
+  // El viaje activo: país y zona horaria, o null si está en hora de España
+  viaje: construccion.viaje && typeof construccion.viaje.zona === 'string' && typeof construccion.viaje.pais === 'string' ? construccion.viaje : null,
+  // El tramo actual y los próximos (base de datos)
+  tramos: Array.isArray(construccion.tramos) ? construccion.tramos.filter((t) => t && typeof t.zona === 'string' && typeof t.pais === 'string') : [],
 };
 
 // La agenda (eventos y tareas con fecha límite pendientes) llega con las referencias cortas; aquí se pasan a ids reales
@@ -3651,6 +4985,7 @@ const pendientes = (construccion.pendientes ?? []).filter((r) => Object.prototyp
 const llegada = $input.first().json;
 const resp = llegada?.saltar_modelo === true ? { error: 'no se llamó al modelo y el mensaje no es un comando' } : llegada;
 const plan = planificar({ resp, mensajeId, config: configPlan, ahora: new Date(), refs, contexto, agenda, archivos, pendientes });
+
 // Preguntas que el usuario ya había visto y ha dejado sin contestar al escribir otra cosa: se cierran (no se apunta nada de
 // ellas) y Resultado se lo dice antes de la respuesta. Las decide «Construir petición».
 const ignoradas = (Array.isArray(construccion.preguntas_ignoradas) ? construccion.preguntas_ignoradas : [])

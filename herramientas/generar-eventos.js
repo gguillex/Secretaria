@@ -73,7 +73,7 @@ function construirFlujoBase() {
       [PASO * 2, 0],
       {
         method: 'GET',
-        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,estado,fecha_inicio,aviso_whatsapp_en,aviso_whatsapp_enviado_at&tipo=eq.evento&estado=eq.pendiente&aviso_whatsapp_en=lte.{{ new Date().toISOString() }}&aviso_whatsapp_enviado_at=is.null&fecha_inicio=gt.{{ new Date().toISOString() }}&order=fecha_inicio.asc&limit=50`,
+        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,estado,fecha_inicio,zona_alarma,lugar_alarma,aviso_whatsapp_en,aviso_whatsapp_enviado_at&tipo=eq.evento&estado=eq.pendiente&aviso_whatsapp_en=lte.{{ new Date().toISOString() }}&aviso_whatsapp_enviado_at=is.null&fecha_inicio=gt.{{ new Date().toISOString() }}&order=fecha_inicio.asc&limit=50`,
         ...supabase,
       },
       { executeOnce: true, alwaysOutputData: true },
@@ -149,7 +149,7 @@ function construirFlujoBase() {
       PASO * 3,
       300,
       2,
-      '## Antes de publicar\n1. Credencial **Supabase API** en *Leer avisos vencidos*, *Leer último mensaje*, *Marcar avisados* y *Guardar aviso enviado*, y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n2. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Pruébalo con *Disparador manual* (sin avisos vencidos termina sin hacer nada) y publica el flujo.\n4. Elige «Secretaria · Aviso de fallos» como Error workflow.',
+      '## Antes de publicar\n0. Necesita la base de datos al día (zona de cada cita: *Leer avisos vencidos* la lee; sin ella falla).\n1. Credencial **Supabase API** en *Leer avisos vencidos*, *Leer último mensaje*, *Marcar avisados* y *Guardar aviso enviado*, y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n2. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Pruébalo con *Disparador manual* (sin avisos vencidos termina sin hacer nada) y publica el flujo.\n4. Elige «Secretaria · Aviso de fallos» como Error workflow.',
     ),
   ];
 

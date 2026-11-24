@@ -187,7 +187,9 @@ async function main() {
     const f = construirFlujo();
     const por = Object.fromEntries(f.nodes.map((x) => [x.name, x]));
     const trabajo = f.nodes.filter((x) => !x.type.endsWith('stickyNote'));
-    afirmar('8 nodos de trabajo', trabajo.length === 8, String(trabajo.length));
+    afirmar('9 nodos de trabajo', trabajo.length === 9, String(trabajo.length));
+    const lv = por['Leer viaje'];
+    afirmar('Leer viaje: RPC viajes_vigentes entre Leer último mensaje y Redactar, una vez, y su fallo NO para el resumen (sin la base de datos al día no hay viaje)', lv.parameters.url.endsWith('/rest/v1/rpc/viajes_vigentes') && lv.parameters.method === 'POST' && lv.executeOnce === true && lv.alwaysOutputData === true && lv.onError === 'continueRegularOutput' && f.connections['Leer último mensaje'].main[0][0].node === 'Leer viaje' && f.connections['Leer viaje'].main[0][0].node === 'Redactar resumen');
     afirmar('zona Europe/Madrid', f.settings.timezone === 'Europe/Madrid');
     const regla = por['Cada día a las 7:00'].parameters.rule.interval[0];
     afirmar('programación: cada día a las 7:00', regla.field === 'days' && regla.daysInterval === 1 && regla.triggerAtHour === 7 && regla.triggerAtMinute === 0 && por['Cada día a las 7:00'].typeVersion === 1.4);
@@ -205,7 +207,7 @@ async function main() {
       const x = por[nom];
       afirmar(`${nom}: GET a Supabase con credencial, una vez, con salida aunque no haya filas y SIN ocultar fallos`, x.parameters.method === 'GET' && x.parameters.nodeCredentialType === 'supabaseApi' && x.executeOnce === true && x.alwaysOutputData === true && x.onError === undefined);
     }
-    afirmar('items pendientes: lee las columnas que usa el formato y filtra por estado', por['Leer pendientes'].parameters.url.includes('select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,proyecto') && por['Leer pendientes'].parameters.url.includes('estado=eq.pendiente'));
+    afirmar('items pendientes: lee las columnas que usa el formato y filtra por estado', por['Leer pendientes'].parameters.url.includes('select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,zona_alarma,lugar_alarma,proyecto') && por['Leer pendientes'].parameters.url.includes('estado=eq.pendiente'));
     afirmar('archivos: solo los pendientes', por['Leer archivos'].parameters.url.includes('/rest/v1/archivos?select=id,nombre,drive_url,created_at&estado=eq.pendiente'));
     afirmar('último mensaje: solo ids de WhatsApp, el más reciente', por['Leer último mensaje'].parameters.url.includes('wa_message_id=like.wamid.*') && por['Leer último mensaje'].parameters.url.includes('order=created_at.desc&limit=1'));
     const e = por['Enviar WhatsApp'];
@@ -215,6 +217,44 @@ async function main() {
     const actual = JSON.stringify(f, null, 2) + '\n';
     const enDisco = fs.existsSync(path.join(__dirname, '..', 'flujos', 'resumen-diario.json')) ? leer('..', 'flujos', 'resumen-diario.json') : null;
     afirmar('flujos/resumen-diario.json está al día (si no, ejecuta node herramientas/generar-resumen.js)', enDisco === actual);
+  }
+
+  console.log('Viajes');
+  {
+    const cuerpoDe = async (viaje, items = TODO, archivos = ARCH) => (await redactar(items, archivos, ULT_RECIENTE, { nodos: { 'Leer viaje': viaje } }))[0].cuerpo.text.body;
+    const sin = await cuerpoDe([{ id: 'v', pais: 'Portugal', zona: 'Europe/Lisbon', hasta: null, cerrado_at: null }]);
+    afirmar('de viaje sin fecha de vuelta: la segunda línea recuerda dónde está', sin.split('\n')[1] === '🌍 Sigues en Portugal (una hora menos que en España). Cuando vuelvas, dime «he vuelto».' && sin.startsWith('Buenos días. Esto es lo que tienes'), sin.split('\n').slice(0, 3).join(' | '));
+    const conFecha = await cuerpoDe([{ id: 'v', pais: 'Portugal', zona: 'Europe/Lisbon', hasta: '2026-10-20', cerrado_at: null }]);
+    afirmar('con fecha de vuelta: no se recuerda (vuelve sola a la hora de España)', !conFecha.includes('🌍'));
+    afirmar('en un sitio con la misma hora (Francia): no se recuerda', !(await cuerpoDe([{ id: 'v', pais: 'Francia', zona: 'Europe/Paris', hasta: null }])).includes('🌍'));
+    afirmar('sin viaje, o sin la base de datos al día (la lectura falla): el resumen de siempre', !(await cuerpoDe([{}])).includes('🌍') && !(await cuerpoDe([{ error: { message: 'HTTP 404' } }])).includes('🌍'));
+    const nada = await cuerpoDe([{ id: 'v', pais: 'Japón', zona: 'Asia/Tokyo', hasta: null }], [{}], [{}]);
+    afirmar('aunque no tengas nada pendiente, se recuerda dónde estás', nada.startsWith('Buenos días. No tienes nada pendiente.\n🌍 Sigues en Japón (7 horas más que en España)'), nada);
+    // Tramo 2: las horas de hoy en la de allí y la línea de la zona al final
+    const ny = await cuerpoDe([{ id: 'v', pais: 'Estados Unidos (Nueva York)', zona: 'America/New_York', hasta: '2026-10-20' }], [DENTISTA]);
+    afirmar('en Nueva York, el dentista puesto en España sale a las 10:00 sin paréntesis y sin línea final', ny.includes('• Dentista, 10:00') && !ny.includes('🕒') && ny.startsWith('Buenos días. Esto es lo que tienes (lunes 12 oct)'), ny);
+    const nyZ = await cuerpoDe([{ id: 'v', pais: 'Estados Unidos (Nueva York)', zona: 'America/New_York', hasta: '2026-10-20' }], [{ ...DENTISTA, fecha_inicio: '2026-10-12T14:00:00+00:00', fecha_fin: '2026-10-12T15:00:00+00:00', zona_alarma: 'America/New_York', lugar_alarma: 'Nueva York' }]);
+    afirmar('una cita puesta en Nueva York sale «10:00 (Nueva York)» en «Hoy»', nyZ.includes('• Dentista, 10:00 (Nueva York)'), nyZ);
+    const sinHoras = await cuerpoDe([{ id: 'v', pais: 'Portugal', zona: 'Europe/Lisbon', hasta: '2026-10-20' }], [{}], [{}]);
+    afirmar('sin horas en el mensaje, sin la línea de la zona', !sinHoras.includes('🕒'), sinHoras);
+    const tareaFecha = await cuerpoDe([{ id: 'v', pais: 'Estados Unidos (Nueva York)', zona: 'America/New_York', hasta: '2026-10-20' }], [item({ tipo: 'tarea', titulo: 'Pagar', fecha_limite: '2026-10-15' })], [{}]);
+    afirmar('una fecha sin hora (fecha límite) no se corre al día anterior en América', tareaFecha.includes('jue 15 oct'), tareaFecha);
+    // las alarmas, a su hora y en su zona, con el sitio si no es Madrid; sin línea de citas si no hay citas
+    const alarmaPT = item({ tipo: 'tarea', titulo: 'Avión', recordar_en: '2026-10-13T18:00:00+00:00', zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' });
+    const alarmaES = item({ tipo: 'tarea', titulo: 'Llamar a mamá', recordar_en: '2026-10-13T15:00:00+00:00' });
+    const conAlarmas = await cuerpoDe([{ id: 'v', pais: 'Japón', zona: 'Asia/Tokyo', hasta: '2026-10-20' }], [alarmaPT, alarmaES], [{}]);
+    afirmar('alarmas: la de Portugal «19:00 (Portugal)» y la de España «17:00» sin paréntesis, aunque estés en Japón; sin línea de citas', conAlarmas.includes('• 🔔 Avión, mar 13 oct, 19:00 (Portugal)') && conAlarmas.includes('• 🔔 Llamar a mamá, mar 13 oct, 17:00') && !conAlarmas.includes('🕒'), conAlarmas);
+    // el día antes de un viaje planeado, el aviso y lo que tienes esos días (el reloj de las pruebas es el lunes 12 de octubre, 7:00)
+    const conPlan = await cuerpoDe([{ id: 'p', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-13', hasta: '2026-10-20', cerrado_at: null }], [DENTISTA, item({ tipo: 'evento', titulo: 'Reunión', fecha_inicio: '2026-10-14T08:00:00+00:00', fecha_fin: '2026-10-14T09:00:00+00:00' })], [{}]);
+    afirmar('el día antes, «✈️ Mañana te vas a Japón (hasta el …): allí es … Esos días tienes: • 📅 Reunión…»; el viaje planeado no cuenta como actual', conPlan.includes('✈️ Mañana te vas a Japón (hasta el mar 20 oct): allí es 7 horas más que en España. Esos días tienes:\n• 📅 Reunión, mié 14 oct, 10:00') && !conPlan.includes('🌍') && conPlan.includes('• Dentista, 10:00'), conPlan);
+    const sinPlan = await cuerpoDe([{ id: 'p', pais: 'Japón', zona: 'Asia/Tokyo', desde: '2026-10-16', hasta: '2026-10-20', cerrado_at: null }], [DENTISTA], [{}]);
+    afirmar('… otro día no dice nada del viaje', !sinPlan.includes('✈️'), sinPlan);
+    afirmar('estando fuera, el resumen aclara que lo que no lleva país va en hora de España', conAlarmas.endsWith('(Lo que no lleva país va en hora de España.)'), conAlarmas);
+    afirmar('… en España, no', !(await cuerpoDe([{}], [item({ tipo: 'tarea', titulo: 'Llamar', recordar_en: '2026-10-13T15:00:00+00:00' })], [{}])).includes('Lo que no lleva país'));
+    // Las funciones del viaje son copia exacta de las de planificar.js
+    const plan = leer('flujo', 'planificar.js');
+    const trozo = (fuente) => { const i = fuente.indexOf('function offsetZona(zona, fecha) {'); return fuente.slice(i, fuente.indexOf('// «Estoy en Portugal», «me voy a Nueva York', i)); };
+    afirmar('offsetZona, difConEspana y textoDiferencia son copia exacta de planificar.js', trozo(plan).length > 200 && trozo(plan) === (() => { const i = CODIGO_REDACTAR.indexOf('function offsetZona(zona, fecha) {'); return CODIGO_REDACTAR.slice(i, CODIGO_REDACTAR.indexOf('\n// --- Pegamento con n8n', i)); })());
   }
 
   console.log(`\n${pasan} pruebas correctas, ${fallan.length} fallos.`);

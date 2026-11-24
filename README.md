@@ -2,7 +2,7 @@
 
 [![Pruebas](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml/badge.svg)](https://github.com/gguillex/Secretaria/actions/workflows/pruebas.yml)
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-![Versión 1.6.0](https://img.shields.io/badge/versión-1.6.0-informational)
+![Versión 1.7.0](https://img.shields.io/badge/versión-1.7.0-informational)
 ![n8n 2.41.6](https://img.shields.io/badge/n8n-2.41.6-EA4B71)
 ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933)
 ![Gemini](https://img.shields.io/badge/IA-Gemini-4285F4)
@@ -44,6 +44,13 @@ Pensado para **una sola persona**: tú. Corre en un servidor pequeño propio, co
 - **Horario fijo semanal** («trabajo los viernes de 16 a 20»): si apuntas una cita que cae dentro, pregunta antes. `/horario` lo
   enseña y `/horario quitar N` quita un bloque.
 - **La compra:** lo que sea comprar va a la lista de la compra aunque digas un día, sin repetir lo que ya está.
+- **Viajes y zona horaria:** dices dónde estás por escrito («estoy en Portugal», «me voy a Nueva York hasta el domingo», «he vuelto»,
+  «¿dónde estoy?», `/viaje`), también planeado y por tramos («el 20 me voy a Japón hasta el 30»; `/viajes` los lista y «cancela el viaje a
+  Japón» los quita). Estando fuera, las alarmas y citas con hora van a la hora de allí y salen con el país entre paréntesis («19:00
+  (Portugal)»); nada se mueve solo al cambiar de sitio, y el resumen de las 7:00 avisa el día antes de un viaje. No usa tu ubicación:
+  solo lo que escribes.
+- **Notas en carpetas de Drive:** «ponme en Budapest que el hotel es el Hilton» guarda una nota ligada a esa carpeta, y «dame todo» las
+  enseña agrupadas por carpeta. «Dame todos los archivos de la carpeta Fotos» te manda todo lo de Drive, también lo que subiste a mano.
 - **Charla breve:** a un saludo o un «gracias» contesta con naturalidad, sin guardar nada. Si ofrece apuntar algo («¿quieres que lo
   apunte como tarea?»), tu «sí» posterior sabe de qué hablabais.
 - **Entiende lo que acabas de decir:** ve tus últimos mensajes y lo que contestó, así que «no, quiero que…» se entiende; y si

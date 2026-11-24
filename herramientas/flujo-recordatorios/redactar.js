@@ -12,11 +12,20 @@
 
 const config = $('Configuración').first().json.config;
 const LIMITE_MENSAJE = 3800;
-const ZONA = 'Europe/Madrid';
+const ZONA_ESPANA = 'Europe/Madrid';
 
 const limpiar = (s) => String(s ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim();
-const fmtHora = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const hora = (iso) => fmtHora.format(new Date(iso));
+// Cada alarma se escribe a su hora y en su zona: las de Madrid sin más («18:30») y las demás con el sitio («19:00 Portugal»),
+// estés donde estés. La zona viene de items.zona_alarma (base de datos al día); sin ella, o si no se reconoce, Madrid
+const horaDe = (r) => {
+  const z = typeof r.zona_alarma === 'string' && r.zona_alarma !== '' ? r.zona_alarma : ZONA_ESPANA;
+  try {
+    const h = new Intl.DateTimeFormat('es-ES', { timeZone: z, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(r.recordar_en));
+    return z === ZONA_ESPANA ? h : `${h} ${limpiar(r.lugar_alarma || z)}`;
+  } catch (e) {
+    return new Intl.DateTimeFormat('es-ES', { timeZone: ZONA_ESPANA, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(r.recordar_en));
+  }
+};
 
 // Antelación con palabras: 60 -> "1 hora", 120 -> "2 horas", 30 -> "30 minutos"
 function antes(minutos) {
@@ -41,14 +50,14 @@ if (!para) throw new Error('Redactar recordatorio: falta WHATSAPP_NUMERO_PERMITI
 
 const titulo = (r) => limpiar(r.titulo);
 const una = (r) => {
-  if (r.atrasado) return `🔔 Recordatorio atrasado (era a las ${hora(r.recordar_en)}): *${titulo(r)}*`;
+  if (r.atrasado) return `🔔 Recordatorio atrasado (era a las ${horaDe(r)}): *${titulo(r)}*`;
   if (r.aviso === 0) return `🔔 Ahora: *${titulo(r)}*`;
-  return `🔔 ${antes(r.aviso)}: *${titulo(r)}* (${hora(r.recordar_en)})`;
+  return `🔔 ${antes(r.aviso)}: *${titulo(r)}* (${horaDe(r)})`;
 };
 const linea = (r) => {
-  if (r.atrasado) return `• Atrasado (era a las ${hora(r.recordar_en)}): ${titulo(r)}`;
+  if (r.atrasado) return `• Atrasado (era a las ${horaDe(r)}): ${titulo(r)}`;
   if (r.aviso === 0) return `• Ahora: ${titulo(r)}`;
-  return `• ${antes(r.aviso)}: ${titulo(r)} (${hora(r.recordar_en)})`;
+  return `• ${antes(r.aviso)}: ${titulo(r)} (${horaDe(r)})`;
 };
 
 let texto = recordatorios.length === 1 ? una(recordatorios[0]) : `🔔 *Recordatorios*\n${recordatorios.map(linea).join('\n')}`;

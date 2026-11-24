@@ -106,6 +106,8 @@ async function main() {
     const [a] = await filtrar([fila()]);
     afirmar('a 50 minutos de las 18:30 toca el aviso de 1 hora antes', a.recordatorios.length === 1 && a.recordatorios[0].aviso === 60 && a.recordatorios[0].atrasado === false && a.recordatorios[0].hecho === false && a.recordatorios[0].avisos_nuevos.join() === '60', JSON.stringify(a));
     afirmar('sin filas no queda nada (el flujo termina)', (await filtrar([{}])).length === 0 && (await filtrar([])).length === 0);
+    const [z] = await filtrar([fila({ zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' })]);
+    afirmar('la zona de la alarma pasa a la redacción; sin zona, null', z.recordatorios[0].zona_alarma === 'Europe/Lisbon' && z.recordatorios[0].lugar_alarma === 'Portugal' && a.recordatorios[0].zona_alarma === null);
     afirmar('un aviso ya enviado no se repite', (await filtrar([fila({ recordatorio_avisos: [60] })])).length === 0);
     afirmar('todavía no ha llegado el momento del siguiente aviso (30 minutos antes son las 18:00)', (await filtrar([fila({ recordatorio_avisos: [60] })], '2026-10-12T15:59:00.000Z')).length === 0);
     const b = await filtrar([fila({ recordatorio_avisos: [60] })], '2026-10-12T16:00:00.000Z');
@@ -144,6 +146,13 @@ async function main() {
     const c = r.cuerpo;
     afirmar('con la ventana abierta, texto libre al número permitido', c.type === 'text' && c.messaging_product === 'whatsapp' && c.to === '34600111222' && c.text.preview_url === false, JSON.stringify(c));
     afirmar('1 hora antes: «En 1 hora» y la hora de Madrid', r.texto === '🔔 En 1 hora: *Sacar la ropa* (18:30)', r.texto);
+    const PT = { zona_alarma: 'Europe/Lisbon', lugar_alarma: 'Portugal' };
+    const [pt] = await redactar([rec(PT)], RECIENTE);
+    afirmar('una alarma puesta en hora de Portugal: su hora y su sitio', pt.texto === '🔔 En 1 hora: *Sacar la ropa* (17:30 Portugal)', pt.texto);
+    const [pta] = await redactar([rec({ ...PT, aviso: 0, atrasado: true, hecho: true })], RECIENTE);
+    afirmar('… también atrasada', pta.texto === '🔔 Recordatorio atrasado (era a las 17:30 Portugal): *Sacar la ropa*', pta.texto);
+    const [mal] = await redactar([rec({ zona_alarma: 'Marte/Olimpo', lugar_alarma: 'Marte' })], RECIENTE);
+    afirmar('una zona que no existe: en hora de España, sin romper el aviso', mal.texto === r.texto, mal.texto);
     const [t] = await redactar([rec({ aviso: 30, avisos_nuevos: [60, 30] })], RECIENTE);
     afirmar('30 minutos antes', t.texto === '🔔 En 30 minutos: *Sacar la ropa* (18:30)', t.texto);
     const [n] = await redactar([rec({ aviso: 0, avisos_nuevos: [60, 30, 0], hecho: true })], RECIENTE);
@@ -209,6 +218,7 @@ async function main() {
     afirmar('se dispara cada minuto', sch.type === 'n8n-nodes-base.scheduleTrigger' && sch.parameters.rule.interval[0].field === 'minutes' && sch.parameters.rule.interval[0].minutesInterval === 1);
     const cadena = ['Configuración', 'Leer recordatorios', 'Filtrar recordatorios', 'Leer último mensaje', 'Redactar recordatorio', 'Enviar WhatsApp', 'Preparar marcas', 'Marcar avisados'];
     afirmar('cadena: Configuración, lectura, filtro, último mensaje, redacción, envío, marcas y marcado', cadena.slice(0, -1).every((n, i) => flujo.connections[n].main[0][0].node === cadena[i + 1]));
+    afirmar('Leer recordatorios lee la zona de cada alarma (base de datos)', por('Leer recordatorios').parameters.url.includes('select=id,titulo,estado,recordar_en,zona_alarma,lugar_alarma,recordatorio_avisos,updated_at&'));
     afirmar('los dos disparadores entran por Configuración', flujo.connections['Cada minuto'].main[0][0].node === 'Configuración' && flujo.connections['Disparador manual'].main[0][0].node === 'Configuración');
     const lee = por('Leer recordatorios');
     afirmar('Leer recordatorios: solo tareas pendientes con hora de aviso que ya cae dentro de la antelación máxima', ['tipo=eq.tarea', 'estado=eq.pendiente', 'recordar_en=lte.', 'avisos_min', 'recordatorio_avisos', 'updated_at'].every((t) => lee.parameters.url.includes(t)) && lee.alwaysOutputData === true && lee.parameters.method === 'GET');

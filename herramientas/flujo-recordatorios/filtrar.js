@@ -31,6 +31,9 @@ for (const r of $input.all().map((i) => i.json)) {
     id: r.id,
     titulo: r.titulo.trim(),
     recordar_en: r.recordar_en,
+    // La zona de la alarma (base de datos): el aviso escribe la hora en ella
+    zona_alarma: typeof r.zona_alarma === 'string' && r.zona_alarma !== '' ? r.zona_alarma : null,
+    lugar_alarma: typeof r.lugar_alarma === 'string' && r.lugar_alarma !== '' ? r.lugar_alarma : null,
     aviso,
     atrasado: aviso === 0 && ahora - inicio > config.margen_atrasado_min * 60000,
     avisos_nuevos: [...new Set([...enviados, ...vencidos])].sort((a, b) => b - a),

@@ -44,7 +44,10 @@ if (!estado.dia || estado.dia.fecha !== hoy) estado.dia = { fecha: hoy, enviados
 const HUECO_EPISODIO_MIN = 15;
 // También un error interno del servicio (500 de Google: «The service was not able to process your request»):
 // pasajero como los demás; si dura 30 minutos, avisa igual.
-const ERROR_DE_RED = /timed out|timeout|bad gateway|gateway time-?out|service unavailable|\b50[0234]\b|internal server error|internal error|backend ?error|not able to process your request|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up/i;
+// n8n no deja pasar el código de Node (ENOTFOUND, ECONNRESET…): lo cambia por su frase («The DNS server returned an error, perhaps the server is
+// offline», «The connection to the server was closed unexpectedly…», «The service refused the connection - perhaps it is offline», «The connection
+// was aborted…»). Sin esas frases, un corte de DNS avisaba desde varios flujos a la vez
+const ERROR_DE_RED = /timed out|timeout|bad gateway|gateway time-?out|service unavailable|\b50[0234]\b|internal server error|internal error|backend ?error|not able to process your request|econnreset|econnrefused|etimedout|enotfound|eai_again|ehostunreach|enetunreach|socket hang up|dns server returned an error|connection to the server was closed unexpectedly|refused the connection|connection was aborted|perhaps (?:it|the server) is offline/i;
 let minutosConRed = 0;
 if (ERROR_DE_RED.test(mensaje) && (config.flujos_periodicos ?? []).includes(flujo) && config.tolerancia_red_min > 0) {
   estado.red = estado.red && typeof estado.red === 'object' ? estado.red : {};

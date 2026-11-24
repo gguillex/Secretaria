@@ -4,6 +4,13 @@ services:
     # propósito, haz antes una copia (docs/servidor.md) y lee los cambios incompatibles de esa versión.
     image: docker.n8n.io/n8nio/n8n:2.41.6
     restart: unless-stopped
+    # DNS de tres proveedores distintos: si los del servidor fallan unos minutos («The DNS server returned an error» en varios flujos a la vez),
+    # Docker pregunta al siguiente. n8n solo resuelve nombres públicos (Supabase, Google, Meta, Gemini, Healthchecks). Para volver a los del
+    # proveedor del servidor: quitar estas líneas y `docker compose up -d`.
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
+      - 8.8.8.8
     # Solo escucha en el propio servidor: el editor se abre por túnel SSH y los webhooks se publican con Tailscale Funnel.
     ports:
       - "127.0.0.1:5678:5678"

@@ -167,6 +167,8 @@ async function main() {
 
     const alm2 = {};
     { const alm500 = {}; afirmar('un 500 de Google («The service was not able to process your request», visto en Vigilar Drive) también se tolera', (await aviso(red('Secretaria · Latido', 'The service was not able to process your request'), alm500)).length === 0); }
+    afirmar('las frases de n8n para los errores de red (DNS, conexión cerrada, rechazada o abortada; fallos reales del 2026-11-12 y 2026-11-16) también se toleran', (await Promise.all([['Secretaria · Latido', 'The DNS server returned an error, perhaps the server is offline'], ['Secretaria · Latido', 'The connection to the server was closed unexpectedly, perhaps it is offline. You can retry the request immediately or wait and retry later.'], ['Secretaria · Sincronizar Calendar', 'The service refused the connection - perhaps it is offline'], ['Secretaria · Sincronizar Calendar', 'The connection was aborted, perhaps the server is offline']].map(([f, m]) => aviso(red(f, m), {})))).every((r) => r.length === 0));
+    afirmar('… pero en un flujo que no es periódico (el principal) avisan enseguida', (await aviso(red('Secretaria · Procesar mensaje', 'The DNS server returned an error, perhaps the server is offline'), {})).length === 1);
     afirmar('un error de verdad (un 404) sigue avisando enseguida', (await aviso(red('Secretaria · Latido', 'The resource you are requesting could not be found (404)'), {})).length === 1);
     afirmar('un Bad gateway también se tolera', (await aviso(red('Secretaria · Latido', 'Bad gateway - the server returned an invalid response'), alm2)).length === 0);
     avanzar(20);

@@ -27,7 +27,8 @@ const eventos = $input
   )
   .sort((a, b) => ms(a.fecha_inicio) - ms(b.fecha_inicio))
   .slice(0, config.max_avisos)
-  .map((r) => ({ id: r.id, titulo: r.titulo, fecha_inicio: r.fecha_inicio }));
+  // La zona de la cita (base de datos): el aviso escribe la hora en ella
+  .map((r) => ({ id: r.id, titulo: r.titulo, fecha_inicio: r.fecha_inicio, zona_alarma: typeof r.zona_alarma === 'string' && r.zona_alarma !== '' ? r.zona_alarma : null, lugar_alarma: typeof r.lugar_alarma === 'string' && r.lugar_alarma !== '' ? r.lugar_alarma : null }));
 
 if (eventos.length === 0) return [];
 return [{ json: { eventos } }];

@@ -71,7 +71,7 @@ function codigoComandos(planificar = leer(ruta('herramientas', 'flujo', 'planifi
     constante('NIVELES_CARPETA_MAX'),
     funcion('segmentosCarpeta'),
     lineas.slice(ini, fin).join('\n'),
-    'return { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, carpetaConocida, clavesIguales, nombresParecidos, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento };',
+    'return { interpretarComando, interpretarAplazamiento, pideListarRepetidos, elegirPregunta, siNoSinPregunta, pideBorrarTodo, borrarSecciones, interpretarDeshacer, seccionElegida, respuestaConfirmacion, quitarConcreto, tipoSuelto, respuestaAvisoCompra, respuestaOferta, esOrdenNueva, interpretarCarpetaSuelta, interpretarCrearCarpeta, interpretarNotaEnCarpeta, interpretarMoverCarpeta, interpretarMoverArchivos, archivarUltimoLote, respuestaCarpeta, carpetaConocida, clavesIguales, nombresParecidos, aceptaSugerencia, interpretarMoverArchivoNombre, interpretarMoverEsos, interpretarMoverContenido, interpretarDeshacerMovimiento, interpretarVerArchivos, interpretarViaje, respuestaViaje, parseHasta, buscarLugar, difConEspana, diceHoraDeReloj, lugarEnMensaje, planearZona, viajeQueAplica, horaDicha };',
     '})()',
   ].join('\n');
 }
@@ -125,11 +125,13 @@ const ORDEN = [
   'Leer quitados',
   'Leer carpetas',
   'Leer conversación',
+  'Leer viaje',
   'Construir petición',
   '¿Hace falta el modelo?',
   'Modelo',
   'Planificar',
   'Escribir en Supabase',
+  'Leer archivos de Drive',
   'Leer consulta',
   '¿Listar carpetas?',
   'Resultado',
@@ -178,7 +180,7 @@ function construirFlujoBase() {
       x('Leer items pendientes'),
       {
         method: 'GET',
-        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,proyecto,created_at&estado=eq.pendiente&order=created_at.desc&limit=200`,
+        url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,zona_alarma,lugar_alarma,proyecto,carpeta,created_at&estado=eq.pendiente&order=created_at.desc&limit=200`,
         ...supabase,
       },
       { alwaysOutputData: true },
@@ -290,6 +292,15 @@ function construirFlujoBase() {
       },
       { alwaysOutputData: true, onError: 'continueRegularOutput' },
     ),
+    // Los viajes (función viajes_vigentes): el tramo actual y los próximos, con país, zona y fechas. Cierra antes
+    // los que pasaron su último día. Sin la base de datos al día falla sin cortar el flujo y no hay viaje (todo en hora de España).
+    nodoHttp(
+      49,
+      'Leer viaje',
+      x('Leer viaje'),
+      { method: 'POST', url: `={{ ${CFG}.supabase_url }}/rest/v1/rpc/viajes_vigentes`, ...supabase, sendBody: true, specifyBody: 'json', jsonBody: '{}' },
+      { alwaysOutputData: true, onError: 'continueRegularOutput' },
+    ),
     nodoCode(6, 'Construir petición', x('Construir petición'), 'construir-peticion.js', [
       ['__PROMPTS__', JSON.stringify(prompts)],
       ['__COMANDOS__', codigoComandos()],
@@ -354,6 +365,15 @@ function construirFlujoBase() {
         jsonBody: '={{ JSON.stringify($json.cuerpo) }}',
       },
       { onError: 'continueRegularOutput' },
+    ),
+    // Solo con «ver archivos»: los archivos de la foto del árbol de Drive (también los subidos a mano). Con las demás intenciones,
+    // la misma lectura inocua que «Leer consulta». Un fallo no corta nada: se enseñan solo los archivos registrados.
+    nodoHttp(
+      107,
+      'Leer archivos de Drive',
+      x('Leer archivos de Drive'),
+      { method: 'GET', url: "={{ $('Planificar').first().json.meta.consulta_drive_url || $('Planificar').first().json.meta.consulta_url }}", ...supabase },
+      { executeOnce: true, alwaysOutputData: true, onError: 'continueRegularOutput' },
     ),
     // Se ejecuta una vez por mensaje. Con intención "consultar" lee la lista pedida; con las demás,
     // una lectura inocua del mensaje recién guardado (así no hace falta un nodo IF ni un Merge).
@@ -592,7 +612,7 @@ function construirFlujoBase() {
       0,
       900,
       2,
-      '## Antes de ejecutar\n1. Elige la credencial en **Modelo** (Header Auth de Gemini) y en **Guardar mensaje**, **Leer memoria**, **Leer items pendientes**, **Leer pregunta pendiente**, **Leer archivos**, **Leer proyectos**, **Leer avisos**, **Leer horario**, **Leer respuesta citada**, **Leer quitados**, **Leer carpetas**, **Leer conversación**, **Escribir en Supabase**, **Leer consulta**, **Contar archivos**, **Marcar borrado** y **Anotar movimiento** (Supabase API), y la de **Google Drive OAuth2** en **Listar nivel 1**, **Listar nivel 2**, **Listar nivel 3**, **Mandar a la papelera** **Mover en Drive** y **Crear en Drive**.\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**). En **Entrada**, el `MENSAJE` de prueba.\n3. Requiere la base de datos al día (`supabase/instalar.sql`, o los `supabase/actualizar-*.sql` que te falten si venías de una versión anterior). Sin ella algunos nodos fallan: `Leer avisos`, `Leer horario` y `Leer respuesta citada` sin cortar el flujo (faltarían esas funciones), `Marcar borrado` y **Anotar movimiento** después de que Drive ya haya hecho el cambio (Vigilar Drive lo avisará como hecho a mano). La cola de mensajes seguidos y el turno viven en el flujo de WhatsApp: este flujo no espera nunca.\n\nLas filas de prueba tienen `wa_message_id` que empieza por `manual-`.',
+      '## Antes de ejecutar\n1. Elige la credencial en **Modelo** (Header Auth de Gemini) y en **Guardar mensaje**, **Leer memoria**, **Leer items pendientes**, **Leer pregunta pendiente**, **Leer archivos**, **Leer proyectos**, **Leer avisos**, **Leer horario**, **Leer respuesta citada**, **Leer quitados**, **Leer carpetas**, **Leer conversación**, **Leer viaje**, **Escribir en Supabase**, **Leer archivos de Drive**, **Leer consulta**, **Contar archivos**, **Marcar borrado** y **Anotar movimiento** (Supabase API), y la de **Google Drive OAuth2** en **Listar nivel 1**, **Listar nivel 2**, **Listar nivel 3**, **Mandar a la papelera** **Mover en Drive** y **Crear en Drive**.\n2. Identificadores: `SUPABASE_URL` y `DRIVE_CARPETA_RAIZ_ID` en el `.env` del servidor (no hace falta tocar **Configuración**). En **Entrada**, el `MENSAJE` de prueba.\n3. Requiere la base de datos al día (`supabase/instalar.sql`, o los `supabase/actualizar-*.sql` que te falten si venías de una versión anterior). Sin ella algunos nodos fallan: `Leer avisos`, `Leer horario` y `Leer respuesta citada` sin cortar el flujo (faltarían esas funciones), `Marcar borrado` y **Anotar movimiento** después de que Drive ya haya hecho el cambio (Vigilar Drive lo avisará como hecho a mano). La cola de mensajes seguidos y el turno viven en el flujo de WhatsApp: este flujo no espera nunca.\n\nLas filas de prueba tienen `wa_message_id` que empieza por `manual-`.',
       // debajo de «Al ser llamado» (y = 200), sin taparlo
       360,
       260,
@@ -603,7 +623,7 @@ function construirFlujoBase() {
   // «Leer items pendientes» se repetía por cada fila de la memoria (y así en cadena), el modelo veía cada elemento duplicado («Tienes varias
   // citas de Médico» con una sola) y un mensaje lanzaba cientos de lecturas a Supabase. Ninguna depende
   // del item que recibe: cada una se ejecuta una sola vez y devuelve todas sus filas.
-  const LECTURAS_UNA_VEZ = ['Guardar mensaje', 'Leer memoria', 'Leer items pendientes', 'Leer pregunta pendiente', 'Leer archivos', 'Leer proyectos', 'Leer avisos', 'Leer horario', 'Leer respuesta citada', 'Leer quitados', 'Leer carpetas', 'Leer conversación'];
+  const LECTURAS_UNA_VEZ = ['Guardar mensaje', 'Leer memoria', 'Leer items pendientes', 'Leer pregunta pendiente', 'Leer archivos', 'Leer proyectos', 'Leer avisos', 'Leer horario', 'Leer respuesta citada', 'Leer quitados', 'Leer carpetas', 'Leer conversación', 'Leer viaje'];
   for (const nd of nodos) if (LECTURAS_UNA_VEZ.includes(nd.name)) nd.executeOnce = true;
 
   const conexiones = {};

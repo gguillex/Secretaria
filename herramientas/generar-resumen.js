@@ -68,16 +68,19 @@ function construirFlujoBase() {
     },
     { parameters: {}, id: id(2), name: 'Disparador manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 120] },
     nodoCode(3, 'Configuración', [PASO, 0], 'configuracion.js'),
-    nodoHttp(4, 'Leer pendientes', [PASO * 2, 0], { method: 'GET', url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,proyecto&estado=eq.pendiente&order=created_at.desc&limit=200`, ...supabase }, lectura),
+    nodoHttp(4, 'Leer pendientes', [PASO * 2, 0], { method: 'GET', url: `={{ ${CFG}.supabase_url }}/rest/v1/items?select=id,tipo,titulo,contenido,lista,estado,fecha_inicio,fecha_fin,fecha_limite,recordar_en,zona_alarma,lugar_alarma,proyecto&estado=eq.pendiente&order=created_at.desc&limit=200`, ...supabase }, lectura),
     nodoHttp(5, 'Leer archivos', [PASO * 3, 0], { method: 'GET', url: `={{ ${CFG}.supabase_url }}/rest/v1/archivos?select=id,nombre,drive_url,created_at&estado=eq.pendiente&eliminado_at=is.null&order=created_at.asc&limit=100`, ...supabase }, lectura),
     // Último mensaje que has ESCRITO tú (los ids de WhatsApp empiezan por "wamid."): decide si la ventana de 24 h sigue abierta
     nodoHttp(6, 'Leer último mensaje', [PASO * 4, 0], { method: 'GET', url: `={{ ${CFG}.supabase_url }}/rest/v1/mensajes?select=created_at&wa_message_id=like.wamid.*&order=created_at.desc&limit=1`, ...supabase }, lectura),
-    nodoCode(7, 'Redactar resumen', [PASO * 5, 0], 'redactar.js'),
+    // Los viajes, el actual y los próximos (función viajes_vigentes). Es lo único que puede fallar sin parar el
+    // resumen: sin la base de datos al día no hay viaje
+    nodoHttp(9, 'Leer viaje', [PASO * 5, 160], { method: 'POST', url: `={{ ${CFG}.supabase_url }}/rest/v1/rpc/viajes_vigentes`, ...supabase, sendBody: true, specifyBody: 'json', jsonBody: '{}' }, { ...lectura, onError: 'continueRegularOutput' }),
+    nodoCode(7, 'Redactar resumen', [PASO * 6, 0], 'redactar.js'),
     // Sin onError: si Meta rechaza el envío (token caducado, número mal puesto) la ejecución queda en rojo y se ve.
     nodoHttp(
       8,
       'Enviar WhatsApp',
-      [PASO * 6, 0],
+      [PASO * 7, 0],
       {
         method: 'POST',
         url: `=https://graph.facebook.com/{{ ${CFG}.graph_version }}/{{ ${CFG}.phone_number_id }}/messages`,
@@ -91,8 +94,8 @@ function construirFlujoBase() {
     ),
 
     nota(101, -40, -420, PASO * 2, 220, 4, '## ① Disparo y configuración\nSe ejecuta **cada día a las 7:00** (zona Europe/Madrid del flujo) o a mano (Disparador manual).\n**Configuración**: URL de Supabase, Phone number ID y la ventana de 24 h.'),
-    nota(102, PASO * 2 - 40, -420, PASO * 3, 220, 5, '## ② Lecturas\nLee los items pendientes, los archivos sin clasificar (los que esperan en `Entrada`) y la fecha de tu último mensaje. Si una lectura falla, el flujo se detiene con error: no se envía un resumen vacío por un fallo.'),
-    nota(103, PASO * 5 - 40, -420, PASO * 2, 220, 6, '## ③ Mensaje y envío\n**Redactar resumen** manda el resumen completo como texto libre si escribiste hace menos de 23 h, aunque no haya nada (Meta solo admite plantillas fuera de la ventana de 24 h y no se usan: ese día no se manda). «Qué tengo pendiente» devuelve lo mismo cuando quieras.'),
+    nota(102, PASO * 2 - 40, -420, PASO * 4, 220, 5, '## ② Lecturas\nLee los items pendientes, los archivos sin clasificar (los que esperan en `Entrada`), la fecha de tu último mensaje y el viaje activo (base de datos al día). Si una de las tres primeras falla, el flujo se detiene con error: no se envía un resumen vacío por un fallo. `Leer viaje` no lo para (sin la base de datos al día, no hay viaje).'),
+    nota(103, PASO * 6 - 40, -420, PASO * 2, 220, 6, '## ③ Mensaje y envío\n**Redactar resumen** manda el resumen completo como texto libre si escribiste hace menos de 23 h, aunque no haya nada (Meta solo admite plantillas fuera de la ventana de 24 h y no se usan: ese día no se manda). «Qué tengo pendiente» devuelve lo mismo cuando quieras.'),
     nota(
       104,
       -40,
@@ -100,7 +103,7 @@ function construirFlujoBase() {
       PASO * 3,
       300,
       2,
-      '## Antes de publicar\n1. Credencial **Supabase API** en las tres lecturas y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n2. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Pruébalo con *Disparador manual* y publica el flujo.',
+      '## Antes de publicar\n1. Credencial **Supabase API** en las cuatro lecturas y la **Header Auth de WhatsApp** (la misma del flujo de WhatsApp) en *Enviar WhatsApp*.\n2. Identificadores: `SUPABASE_URL` y `WHATSAPP_PHONE_NUMBER_ID` en el `.env` del servidor (no hace falta tocar **Configuración**).\n3. Pruébalo con *Disparador manual* y publica el flujo.',
     ),
   ];
 
@@ -111,7 +114,8 @@ function construirFlujoBase() {
     Configuración: { main: [[a('Leer pendientes')]] },
     'Leer pendientes': { main: [[a('Leer archivos')]] },
     'Leer archivos': { main: [[a('Leer último mensaje')]] },
-    'Leer último mensaje': { main: [[a('Redactar resumen')]] },
+    'Leer último mensaje': { main: [[a('Leer viaje')]] },
+    'Leer viaje': { main: [[a('Redactar resumen')]] },
     'Redactar resumen': { main: [[a('Enviar WhatsApp')]] },
   };
 

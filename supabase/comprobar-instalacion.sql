@@ -5,7 +5,7 @@ with
 tablas_esperadas(nombre) as (
   values ('mensajes'), ('items'), ('memoria'), ('archivos'), ('carpetas_pedidas'), ('drive_arbol'), ('registro_drive'),
          ('vigilantes_estado'), ('registro_calendar'), ('proyectos'), ('turno'), ('avisos_enviados'), ('horario_fijo'), ('llegadas'),
-         ('turnos'), ('carpetas_vaciar'), ('carpetas_creadas')
+         ('turnos'), ('carpetas_vaciar'), ('carpetas_creadas'), ('viajes')
 ),
 funciones_esperadas(nombre) as (
   values ('guardar_con_archivos'), ('salud_sistema'), ('resumen_proyectos'),
@@ -13,7 +13,8 @@ funciones_esperadas(nombre) as (
          ('marcar_borrado_drive'), ('olvidar_memoria'), ('quitar_horario'),
          ('registrar_llegadas'), ('turno_respuesta'), ('marcar_contestados'), ('llegada_perdida'),
          ('reclamar_confirmacion_archivos'), ('mover_carpeta_drive'),
-         ('tomar_turno'), ('soltar_turno'), ('carpetas_conocidas'), ('pedir_vaciar_carpeta'), ('carpetas_por_vaciar'), ('vaciado_hecho')
+         ('tomar_turno'), ('soltar_turno'), ('carpetas_conocidas'), ('pedir_vaciar_carpeta'), ('carpetas_por_vaciar'), ('vaciado_hecho'),
+         ('viaje_empezado'), ('viaje_actual'), ('viajes_vigentes'), ('poner_viaje'), ('planear_viaje'), ('viaje_hasta'), ('volver_de_viaje')
 ),
 tablas as (
   select c.relname as nombre, c.relrowsecurity as rls
@@ -29,8 +30,8 @@ disparadores as (
   select t.tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and not t.tgisinternal
 )
-select 1 as paso, 'existen las 17 tablas' as comprobacion,
-       (select count(*) from tablas_esperadas e where e.nombre in (select nombre from tablas)) = 17 as ok,
+select 1 as paso, 'existen las 18 tablas' as comprobacion,
+       (select count(*) from tablas_esperadas e where e.nombre in (select nombre from tablas)) = 18 as ok,
        coalesce((select string_agg(e.nombre, ', ') from tablas_esperadas e where e.nombre not in (select nombre from tablas)), '') as detalle
 union all
 select 2, 'RLS activado en todas las tablas',
@@ -47,8 +48,8 @@ select 4, 'service_role puede leer y escribir (lo usa n8n)',
        coalesce((select string_agg(nombre, ', ') from tablas t
                  where not has_table_privilege('service_role', 'public.' || t.nombre, 'select, insert, update, delete')), '')
 union all
-select 5, 'existen las 22 funciones que llama n8n',
-       (select count(*) from funciones_esperadas e where e.nombre in (select nombre from funciones)) = 22,
+select 5, 'existen las 29 funciones que llama n8n',
+       (select count(*) from funciones_esperadas e where e.nombre in (select nombre from funciones)) = 29,
        coalesce((select string_agg(e.nombre, ', ') from funciones_esperadas e where e.nombre not in (select nombre from funciones)), '')
 union all
 select 6, 'solo service_role ejecuta esas funciones',
